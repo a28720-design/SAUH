@@ -90,6 +90,16 @@ class LoginPage extends StatelessWidget {
   }
 }
 
+class ClinicalRecord {
+  final String description;
+  final String dateTime;
+
+  ClinicalRecord({
+    required this.description,
+    required this.dateTime,
+  });
+}
+
 class Medication {
   final String name;
   final String time;
@@ -106,11 +116,12 @@ class Patient {
   final String name;
   final int age;
   final String room;
-  final String status;
-  final int heartRate;
-  final double temperature;
-  final int oxygen;
+  String status;
+  int heartRate;
+  double temperature;
+  int oxygen;
   final List<Medication> medications;
+  final List<ClinicalRecord> history;
 
   Patient({
     required this.name,
@@ -121,7 +132,18 @@ class Patient {
     required this.temperature,
     required this.oxygen,
     required this.medications,
+    required this.history,
   });
+}
+
+String getCurrentDateTime() {
+  final now = DateTime.now();
+
+  return '${now.day.toString().padLeft(2, '0')}/'
+      '${now.month.toString().padLeft(2, '0')}/'
+      '${now.year} '
+      '${now.hour.toString().padLeft(2, '0')}:'
+      '${now.minute.toString().padLeft(2, '0')}';
 }
 
 final patients = [
@@ -137,6 +159,12 @@ final patients = [
       Medication(name: 'Paracetamol', time: '08:00', administered: false),
       Medication(name: 'Aspirina', time: '12:00', administered: true),
     ],
+    history: [
+      ClinicalRecord(
+        description: 'Paciente registado no sistema.',
+        dateTime: 'Registo inicial',
+      ),
+    ],
   ),
   Patient(
     name: 'Ana Costa',
@@ -149,6 +177,12 @@ final patients = [
     medications: [
       Medication(name: 'Ibuprofeno', time: '10:00', administered: true),
     ],
+    history: [
+      ClinicalRecord(
+        description: 'Paciente registado no sistema.',
+        dateTime: 'Registo inicial',
+      ),
+    ],
   ),
   Patient(
     name: 'Carlos Mendes',
@@ -160,6 +194,12 @@ final patients = [
     oxygen: 93,
     medications: [
       Medication(name: 'Insulina', time: '09:00', administered: false),
+    ],
+    history: [
+      ClinicalRecord(
+        description: 'Paciente registado no sistema.',
+        dateTime: 'Registo inicial',
+      ),
     ],
   ),
 ];
@@ -233,14 +273,48 @@ List<PatientAlert> generateAlerts() {
         ),
       );
     }
+
+    for (final medication in patient.medications) {
+      if (!medication.administered) {
+        alerts.add(
+          PatientAlert(
+            patientName: patient.name,
+            message:
+                'Medicação pendente: ${medication.name} às ${medication.time}',
+            level: 'Atenção',
+          ),
+        );
+      }
+    }
   }
 
   return alerts;
 }
 
-class DashboardPage extends StatelessWidget {
+String calculatePatientStatus(int heartRate, double temperature, int oxygen) {
+  if (heartRate > 140 ||
+      heartRate < 50 ||
+      oxygen < 90 ||
+      temperature > 38.5 ||
+      temperature < 35) {
+    return 'Crítico';
+  }
+
+  if (heartRate > 120 || oxygen < 95 || temperature > 37.5) {
+    return 'Atenção';
+  }
+
+  return 'Normal';
+}
+
+class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
 
+  @override
+  State<DashboardPage> createState() => _DashboardPageState();
+}
+
+class _DashboardPageState extends State<DashboardPage> {
   Color getStatusColor(String status) {
     if (status == 'Crítico') return Colors.red;
     if (status == 'Atenção') return Colors.orange;
@@ -270,6 +344,20 @@ class DashboardPage extends StatelessWidget {
           ),
         ],
       ),
+
+      floatingActionButton: FloatingActionButton.extended(
+        icon: const Icon(Icons.add),
+        label: const Text('Adicionar Paciente'),
+        onPressed: () async {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const AddPatientPage()),
+          );
+
+          setState(() {});
+        },
+      ),
+
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -281,15 +369,9 @@ class DashboardPage extends StatelessWidget {
                 InfoCard(title: 'Alertas', value: '${alerts.length}'),
               ],
             ),
+
             const SizedBox(height: 20),
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Lista de Pacientes',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-              ),
-            ),
-            const SizedBox(height: 10),
+
             const Align(
               alignment: Alignment.centerLeft,
               child: Text(
@@ -297,41 +379,58 @@ class DashboardPage extends StatelessWidget {
                 style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
               ),
             ),
+
             const SizedBox(height: 10),
+
             SizedBox(
               height: 160,
-              child: ListView.builder(
-                itemCount: alerts.length,
-                itemBuilder: (context, index) {
-                  final alert = alerts[index];
+              child: alerts.isEmpty
+                  ? const Center(child: Text('Sem alertas ativos.'))
+                  : ListView.builder(
+                      itemCount: alerts.length,
+                      itemBuilder: (context, index) {
+                        final alert = alerts[index];
 
-                  return Card(
-                    color: alert.level == 'Crítico'
-                        ? Colors.red.shade100
-                        : Colors.orange.shade100,
-                    child: ListTile(
-                      leading: Icon(
-                        Icons.warning,
-                        color: alert.level == 'Crítico'
-                            ? Colors.red
-                            : Colors.orange,
-                      ),
-                      title: Text(alert.patientName),
-                      subtitle: Text(alert.message),
-                      trailing: Text(
-                        alert.level,
-                        style: TextStyle(
+                        return Card(
                           color: alert.level == 'Crítico'
-                              ? Colors.red
-                              : Colors.orange,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                              ? Colors.red.shade100
+                              : Colors.orange.shade100,
+                          child: ListTile(
+                            leading: Icon(
+                              Icons.warning,
+                              color: alert.level == 'Crítico'
+                                  ? Colors.red
+                                  : Colors.orange,
+                            ),
+                            title: Text(alert.patientName),
+                            subtitle: Text(alert.message),
+                            trailing: Text(
+                              alert.level,
+                              style: TextStyle(
+                                color: alert.level == 'Crítico'
+                                    ? Colors.red
+                                    : Colors.orange,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
                     ),
-                  );
-                },
+            ),
+
+            const SizedBox(height: 20),
+
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Lista de Pacientes',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
               ),
             ),
+
+            const SizedBox(height: 10),
+
             Expanded(
               child: ListView.builder(
                 itemCount: patients.length,
@@ -352,19 +451,183 @@ class DashboardPage extends StatelessWidget {
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      onTap: () {
-                        Navigator.push(
+                      onTap: () async {
+                        await Navigator.push(
                           context,
                           MaterialPageRoute(
                             builder: (_) =>
                                 PatientDetailsPage(patient: patient),
                           ),
                         );
+
+                        setState(() {});
                       },
                     ),
                   );
                 },
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class AddPatientPage extends StatefulWidget {
+  const AddPatientPage({super.key});
+
+  @override
+  State<AddPatientPage> createState() => _AddPatientPageState();
+}
+
+class _AddPatientPageState extends State<AddPatientPage> {
+  final nameController = TextEditingController();
+  final ageController = TextEditingController();
+  final roomController = TextEditingController();
+  final heartRateController = TextEditingController();
+  final temperatureController = TextEditingController();
+  final oxygenController = TextEditingController();
+
+  String selectedStatus = 'Normal';
+
+  void addPatient() {
+    if (nameController.text.isEmpty ||
+        ageController.text.isEmpty ||
+        roomController.text.isEmpty ||
+        heartRateController.text.isEmpty ||
+        temperatureController.text.isEmpty ||
+        oxygenController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Preenche todos os campos.')),
+      );
+      return;
+    }
+
+    final heartRate = int.parse(heartRateController.text);
+    final temperature = double.parse(
+      temperatureController.text.replaceAll(',', '.'),
+    );
+    final oxygen = int.parse(oxygenController.text);
+
+    final newPatient = Patient(
+      name: nameController.text,
+      age: int.parse(ageController.text),
+      room: roomController.text,
+      status: calculatePatientStatus(heartRate, temperature, oxygen),
+      heartRate: heartRate,
+      temperature: temperature,
+      oxygen: oxygen,
+      medications: [],
+      history: [
+        ClinicalRecord(
+          description: 'Paciente adicionado manualmente.',
+          dateTime: getCurrentDateTime(),
+        ),
+      ],
+    );
+
+    patients.add(newPatient);
+
+    Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Adicionar Paciente')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: ListView(
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Nome do paciente',
+                border: OutlineInputBorder(),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            TextField(
+              controller: ageController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Idade',
+                border: OutlineInputBorder(),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            TextField(
+              controller: roomController,
+              decoration: const InputDecoration(
+                labelText: 'Quarto',
+                border: OutlineInputBorder(),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            DropdownButtonFormField<String>(
+              initialValue: selectedStatus,
+              decoration: const InputDecoration(
+                labelText: 'Estado',
+                border: OutlineInputBorder(),
+              ),
+              items: const [
+                DropdownMenuItem(value: 'Normal', child: Text('Normal')),
+                DropdownMenuItem(value: 'Atenção', child: Text('Atenção')),
+                DropdownMenuItem(value: 'Crítico', child: Text('Crítico')),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  selectedStatus = value!;
+                });
+              },
+            ),
+
+            const SizedBox(height: 12),
+
+            TextField(
+              controller: heartRateController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Batimentos cardíacos',
+                border: OutlineInputBorder(),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            TextField(
+              controller: temperatureController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Temperatura',
+                border: OutlineInputBorder(),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            TextField(
+              controller: oxygenController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Oxigénio',
+                border: OutlineInputBorder(),
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            ElevatedButton.icon(
+              icon: const Icon(Icons.save),
+              label: const Text('Guardar Paciente'),
+              onPressed: addPatient,
             ),
           ],
         ),
@@ -448,67 +711,396 @@ class _PatientDetailsPageState extends State<PatientDetailsPage> {
               icon: Icons.air,
             ),
 
-            const SizedBox(height: 20),
+            const SizedBox(height: 12),
 
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Medicação',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.monitor_heart),
+                label: const Text('Atualizar Sinais Vitais'),
+                onPressed: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => UpdateVitalsPage(patient: patient),
+                    ),
+                  );
+
+                  setState(() {});
+                },
               ),
             ),
 
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
 
-            Expanded(
-              child: ListView.builder(
-                itemCount: patient.medications.length,
-                itemBuilder: (context, index) {
-                  final medication = patient.medications[index];
-
-                  return Card(
-                    child: ListTile(
-                      leading: Icon(
-                        medication.administered
-                            ? Icons.check_circle
-                            : Icons.pending_actions,
-                        color: medication.administered
-                            ? Colors.green
-                            : Colors.orange,
-                      ),
-                      title: Text(medication.name),
-                      subtitle: Text('Horário: ${medication.time}'),
-                      trailing: medication.administered
-                          ? const Text(
-                              'Administrado',
-                              style: TextStyle(
-                                color: Colors.green,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            )
-                          : ElevatedButton(
-                              onPressed: () {
-                                setState(() {
-                                  medication.administered = true;
-                                });
-
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      '${medication.name} administrado com sucesso.',
-                                    ),
-                                  ),
-                                );
-                              },
-                              child: const Text('Confirmar'),
-                            ),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.history),
+                label: const Text('Ver Histórico Clínico'),
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ClinicalHistoryPage(patient: patient),
                     ),
                   );
                 },
               ),
             ),
+
+            const SizedBox(height: 20),
+
+            Row(
+              children: [
+                const Text(
+                  'Medicação',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                ),
+                const Spacer(),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.add),
+                  label: const Text('Adicionar'),
+                  onPressed: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => AddMedicationPage(patient: patient),
+                      ),
+                    );
+
+                    setState(() {});
+                  },
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 10),
+
+            Expanded(
+              child: patient.medications.isEmpty
+                  ? const Center(
+                      child: Text('Este paciente ainda não tem medicação.'),
+                    )
+                  : ListView.builder(
+                      itemCount: patient.medications.length,
+                      itemBuilder: (context, index) {
+                        final medication = patient.medications[index];
+
+                        return Card(
+                          child: ListTile(
+                            leading: Icon(
+                              medication.administered
+                                  ? Icons.check_circle
+                                  : Icons.pending_actions,
+                              color: medication.administered
+                                  ? Colors.green
+                                  : Colors.orange,
+                            ),
+                            title: Text(medication.name),
+                            subtitle: Text('Horário: ${medication.time}'),
+                            trailing: medication.administered
+                                ? const Text(
+                                    'Administrado',
+                                    style: TextStyle(
+                                      color: Colors.green,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  )
+                                : ElevatedButton(
+                                    onPressed: () {
+                                      setState(() {
+                                        medication.administered = true;
+
+                                        patient.history.add(
+                                          ClinicalRecord(
+                                            description:
+                                                'Medicação administrada: ${medication.name}.',
+                                            dateTime: getCurrentDateTime(),
+                                          ),
+                                        );
+                                      });
+
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            '${medication.name} administrado com sucesso.',
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    child: const Text('Confirmar'),
+                                  ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class UpdateVitalsPage extends StatefulWidget {
+  final Patient patient;
+
+  const UpdateVitalsPage({super.key, required this.patient});
+
+  @override
+  State<UpdateVitalsPage> createState() => _UpdateVitalsPageState();
+}
+
+class _UpdateVitalsPageState extends State<UpdateVitalsPage> {
+  late TextEditingController heartRateController;
+  late TextEditingController temperatureController;
+  late TextEditingController oxygenController;
+
+  @override
+  void initState() {
+    super.initState();
+
+    heartRateController = TextEditingController(
+      text: widget.patient.heartRate.toString(),
+    );
+
+    temperatureController = TextEditingController(
+      text: widget.patient.temperature.toString(),
+    );
+
+    oxygenController = TextEditingController(
+      text: widget.patient.oxygen.toString(),
+    );
+  }
+
+  void updateVitals() {
+    if (heartRateController.text.isEmpty ||
+        temperatureController.text.isEmpty ||
+        oxygenController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Preenche todos os campos.')),
+      );
+      return;
+    }
+
+    final newHeartRate = int.parse(heartRateController.text);
+    final newTemperature = double.parse(
+      temperatureController.text.replaceAll(',', '.'),
+    );
+    final newOxygen = int.parse(oxygenController.text);
+
+    widget.patient.heartRate = newHeartRate;
+    widget.patient.temperature = newTemperature;
+    widget.patient.oxygen = newOxygen;
+    widget.patient.status = calculatePatientStatus(
+      newHeartRate,
+      newTemperature,
+      newOxygen,
+    );
+
+    widget.patient.history.add(
+      ClinicalRecord(
+        description:
+            'Sinais vitais atualizados: FC $newHeartRate bpm, Temp $newTemperature ºC, Oxigénio $newOxygen%. Estado: ${widget.patient.status}.',
+        dateTime: getCurrentDateTime(),
+      ),
+    );
+
+    Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Atualizar Sinais Vitais')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            TextField(
+              controller: heartRateController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Batimentos cardíacos',
+                border: OutlineInputBorder(),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            TextField(
+              controller: temperatureController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Temperatura',
+                border: OutlineInputBorder(),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            TextField(
+              controller: oxygenController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Oxigénio',
+                border: OutlineInputBorder(),
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.save),
+                label: const Text('Guardar Sinais Vitais'),
+                onPressed: updateVitals,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class AddMedicationPage extends StatefulWidget {
+  final Patient patient;
+
+  const AddMedicationPage({super.key, required this.patient});
+
+  @override
+  State<AddMedicationPage> createState() => _AddMedicationPageState();
+}
+
+class _AddMedicationPageState extends State<AddMedicationPage> {
+  final nameController = TextEditingController();
+  final timeController = TextEditingController();
+
+  bool administered = false;
+
+  void addMedication() {
+    if (nameController.text.isEmpty || timeController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Preenche todos os campos.')),
+      );
+      return;
+    }
+
+    widget.patient.medications.add(
+      Medication(
+        name: nameController.text,
+        time: timeController.text,
+        administered: administered,
+      ),
+    );
+
+    widget.patient.history.add(
+      ClinicalRecord(
+        description:
+            'Nova medicação adicionada: ${nameController.text} às ${timeController.text}. Estado inicial: ${administered ? 'Administrado' : 'Pendente'}.',
+        dateTime: getCurrentDateTime(),
+      ),
+    );
+
+    Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Adicionar Medicação')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Nome do medicamento',
+                border: OutlineInputBorder(),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            TextField(
+              controller: timeController,
+              decoration: const InputDecoration(
+                labelText: 'Horário',
+                hintText: 'Ex: 08:00',
+                border: OutlineInputBorder(),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            SwitchListTile(
+              title: const Text('Já foi administrado?'),
+              value: administered,
+              onChanged: (value) {
+                setState(() {
+                  administered = value;
+                });
+              },
+            ),
+
+            const SizedBox(height: 20),
+
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.save),
+                label: const Text('Guardar Medicação'),
+                onPressed: addMedication,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ClinicalHistoryPage extends StatelessWidget {
+  final Patient patient;
+
+  const ClinicalHistoryPage({
+    super.key,
+    required this.patient,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final reversedHistory = patient.history.reversed.toList();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Histórico - ${patient.name}'),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: reversedHistory.isEmpty
+            ? const Center(
+                child: Text('Ainda não existe histórico clínico.'),
+              )
+            : ListView.builder(
+                itemCount: reversedHistory.length,
+                itemBuilder: (context, index) {
+                  final record = reversedHistory[index];
+
+                  return Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.history, color: Colors.blue),
+                      title: Text(record.description),
+                      subtitle: Text(record.dateTime),
+                    ),
+                  );
+                },
+              ),
       ),
     );
   }
