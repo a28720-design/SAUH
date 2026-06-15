@@ -1,6 +1,12 @@
 import 'package:flutter/material.dart';
 
-void main() {
+import 'supabase_config.dart';
+import 'vital_signs_simulator.dart';
+import 'vital_signs_simulator_section.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await configureSupabasePersistence();
   runApp(const SAUHApp());
 }
 
@@ -120,6 +126,10 @@ class Patient {
   int heartRate;
   double temperature;
   int oxygen;
+  int systolicPressure;
+  int diastolicPressure;
+  int respiratoryRate;
+  String alertLevel;
   final List<Medication> medications;
   final List<ClinicalRecord> history;
 
@@ -131,6 +141,10 @@ class Patient {
     required this.heartRate,
     required this.temperature,
     required this.oxygen,
+    this.systolicPressure = 118,
+    this.diastolicPressure = 76,
+    this.respiratoryRate = 16,
+    this.alertLevel = 'Normal',
     required this.medications,
     required this.history,
   });
@@ -274,6 +288,17 @@ List<PatientAlert> generateAlerts() {
       );
     }
 
+    if (patient.systolicPressure < 90) {
+      alerts.add(
+        PatientAlert(
+          patientName: patient.name,
+          message:
+              'Pressao sistolica perigosa: ${patient.systolicPressure} mmHg',
+          level: 'CrÃ­tico',
+        ),
+      );
+    }
+
     for (final medication in patient.medications) {
       if (!medication.administered) {
         alerts.add(
@@ -315,19 +340,67 @@ class DashboardPage extends StatefulWidget {
 }
 
 class _DashboardPageState extends State<DashboardPage> {
+  int selectedSimulatorPatientIndex = 0;
+  final Set<String> recordedSimulatorAlerts = {};
+
   Color getStatusColor(String status) {
     if (status == 'Crítico') return Colors.red;
     if (status == 'Atenção') return Colors.orange;
+    if (status == 'Critico') return Colors.red;
+    if (status == 'Atencao') return Colors.orange;
+    if (status == 'Em recuperacao') return Colors.orange;
     return Colors.green;
+  }
+
+  Patient get selectedSimulatorPatient {
+    if (patients.isEmpty) {
+      throw StateError('Nao existem pacientes para simular.');
+    }
+    if (selectedSimulatorPatientIndex >= patients.length) {
+      selectedSimulatorPatientIndex = patients.length - 1;
+    }
+    return patients[selectedSimulatorPatientIndex];
+  }
+
+  void updatePatientFromSimulator(Patient patient, VitalSigns vitals) {
+    if (patients.isEmpty) return;
+
+    patient.heartRate = vitals.heartRate;
+    patient.temperature = vitals.temperature;
+    patient.oxygen = vitals.oxygen;
+    patient.systolicPressure = vitals.systolicPressure;
+    patient.diastolicPressure = vitals.diastolicPressure;
+    patient.respiratoryRate = vitals.respiratoryRate;
+    patient.status = vitals.patientStatus;
+    patient.alertLevel = vitals.alertLevel;
+  }
+
+  void recordSimulatorAlert(Patient patient, SimulatorAlert alert) {
+    final signature =
+        '${patient.name}-${alert.type}-${alert.createdAt.toIso8601String()}';
+    if (recordedSimulatorAlerts.contains(signature)) return;
+
+    recordedSimulatorAlerts.add(signature);
+    patient.history.add(
+      ClinicalRecord(
+        description:
+            'Alerta automatico do simulador: ${alert.message}. Nivel: ${alert.level}.',
+        dateTime: getCurrentDateTime(),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final criticalCount = patients
-        .where((patient) => patient.status == 'Crítico')
+        .where(
+          (patient) =>
+              patient.status == 'Crítico' || patient.status == 'Critico',
+        )
         .length;
 
     final alerts = generateAlerts();
+    final simulatorPatient = patients.isEmpty ? null : selectedSimulatorPatient;
 
     return Scaffold(
       appBar: AppBar(
@@ -360,7 +433,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
       body: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
+        child: ListView(
           children: [
             Row(
               children: [
@@ -369,6 +442,73 @@ class _DashboardPageState extends State<DashboardPage> {
                 InfoCard(title: 'Alertas', value: '${alerts.length}'),
               ],
             ),
+
+            const SizedBox(height: 20),
+
+            if (patients.isNotEmpty) ...[
+              Row(
+                children: [
+                  const Text(
+                    'Paciente da simulacao: ',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: DropdownButtonFormField<int>(
+                      value: selectedSimulatorPatientIndex,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      items: [
+                        for (var index = 0; index < patients.length; index++)
+                          DropdownMenuItem(
+                            value: index,
+                            child: Text(
+                              '${patients[index].name} - ${patients[index].room}',
+                            ),
+                          ),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() {
+                          selectedSimulatorPatientIndex = value;
+                        });
+                      },
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 12),
+
+              VitalSignsSimulatorSection(
+                key: ValueKey(simulatorPatient!.name),
+                patientName: simulatorPatient.name,
+                persistence: vitalSignsPersistence,
+                initialVitals: VitalSigns(
+                  heartRate: simulatorPatient.heartRate,
+                  oxygen: simulatorPatient.oxygen,
+                  temperature: simulatorPatient.temperature,
+                  systolicPressure: simulatorPatient.systolicPressure,
+                  diastolicPressure: simulatorPatient.diastolicPressure,
+                  respiratoryRate: simulatorPatient.respiratoryRate,
+                  patientStatus: simulatorPatient.status,
+                  alertLevel: simulatorPatient.alertLevel,
+                  measuredAt: DateTime.now(),
+                ),
+                onVitalsChanged: (vitals) {
+                  setState(() {
+                    updatePatientFromSimulator(simulatorPatient, vitals);
+                  });
+                },
+                onAlertCreated: (alert) {
+                  setState(() {
+                    recordSimulatorAlert(simulatorPatient, alert);
+                  });
+                },
+              ),
+            ],
 
             const SizedBox(height: 20),
 
@@ -431,7 +571,8 @@ class _DashboardPageState extends State<DashboardPage> {
 
             const SizedBox(height: 10),
 
-            Expanded(
+            SizedBox(
+              height: 320,
               child: ListView.builder(
                 itemCount: patients.length,
                 itemBuilder: (context, index) {
@@ -709,6 +850,19 @@ class _PatientDetailsPageState extends State<PatientDetailsPage> {
               title: 'Oxigénio',
               value: '${patient.oxygen}%',
               icon: Icons.air,
+            ),
+
+            VitalCard(
+              title: 'Pressao Arterial',
+              value:
+                  '${patient.systolicPressure}/${patient.diastolicPressure} mmHg',
+              icon: Icons.bloodtype,
+            ),
+
+            VitalCard(
+              title: 'Frequencia Respiratoria',
+              value: '${patient.respiratoryRate} rpm',
+              icon: Icons.waves,
             ),
 
             const SizedBox(height: 12),
