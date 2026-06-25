@@ -129,11 +129,9 @@ class SupabaseVitalSignsPersistence implements VitalSignsPersistence {
   @override
   Future<void> saveVitals(String patientName, VitalSigns vitals) async {
     final payload = vitals.toSupabaseMap(patientName);
-    await client.from('vitals_current').upsert(
-          payload,
-          onConflict: 'patient_name',
-        );
-    await client.from('vitals').insert(payload);
+    await client
+        .from('vitals_current')
+        .upsert(payload, onConflict: 'patient_name');
   }
 
   @override
@@ -143,34 +141,53 @@ class SupabaseVitalSignsPersistence implements VitalSignsPersistence {
 }
 
 class VitalSignsSimulator extends ChangeNotifier {
-  VitalSignsSimulator({
-    required this.patientName,
+  factory VitalSignsSimulator({
+    required String patientName,
     VitalSignsPersistence? persistence,
     ValueChanged<SimulatorAlert>? onAlertCreated,
-    Duration interval = const Duration(seconds: 2),
+    Duration interval = const Duration(seconds: 1),
+    Duration persistenceInterval = const Duration(seconds: 5),
     Duration alertCooldown = const Duration(seconds: 20),
     VitalSigns? initialVitals,
-  })  : _persistence = persistence ?? LocalDemoVitalSignsPersistence(),
-        _onAlertCreated = onAlertCreated,
-        _interval = interval,
-        _alertCooldown = alertCooldown,
-        _vitals = initialVitals ??
-            VitalSigns(
-              heartRate: 78,
-              oxygen: 98,
-              temperature: 36.7,
-              systolicPressure: 118,
-              diastolicPressure: 76,
-              respiratoryRate: 16,
-              patientStatus: 'Normal',
-              alertLevel: 'Normal',
-              measuredAt: DateTime.now(),
-            );
+  }) {
+    return VitalSignsSimulator._(
+      patientName: patientName,
+      persistence: persistence ?? LocalDemoVitalSignsPersistence(),
+      onAlertCreated: onAlertCreated,
+      interval: interval,
+      persistenceInterval: persistenceInterval,
+      alertCooldown: alertCooldown,
+      vitals:
+          initialVitals ??
+          VitalSigns(
+            heartRate: 78,
+            oxygen: 98,
+            temperature: 36.7,
+            systolicPressure: 118,
+            diastolicPressure: 76,
+            respiratoryRate: 16,
+            patientStatus: 'Normal',
+            alertLevel: 'Normal',
+            measuredAt: DateTime.now(),
+          ),
+    );
+  }
+
+  VitalSignsSimulator._({
+    required this.patientName,
+    required this._persistence,
+    required this._onAlertCreated,
+    required this._interval,
+    required this._persistenceInterval,
+    required this._alertCooldown,
+    required this._vitals,
+  });
 
   final String patientName;
   final VitalSignsPersistence _persistence;
   final ValueChanged<SimulatorAlert>? _onAlertCreated;
   final Duration _interval;
+  final Duration _persistenceInterval;
   final Duration _alertCooldown;
   final Random _random = Random();
   final Map<String, DateTime> _lastAlertByType = {};
@@ -181,6 +198,10 @@ class VitalSignsSimulator extends ChangeNotifier {
   VitalSigns _vitals;
   SimulatorAlert? _latestAlert;
   String? _lastPersistenceError;
+  DateTime? _lastVitalsSavedAt;
+  bool _isSavingVitals = false;
+  bool _isCreatingAlerts = false;
+  int _ticksInCurrentMode = 0;
 
   SimulationMode get mode => _mode;
   VitalSigns get vitals => _vitals;
@@ -202,6 +223,9 @@ class VitalSignsSimulator extends ChangeNotifier {
   }
 
   void setMode(SimulationMode mode) {
+    if (_mode != mode) {
+      _ticksInCurrentMode = 0;
+    }
     _mode = mode;
     _lastBotAction = _messageForMode(mode);
 
@@ -225,10 +249,11 @@ class VitalSignsSimulator extends ChangeNotifier {
 
     if (_containsAny(normalized, ['critico', 'em estado critico'])) {
       setMode(SimulationMode.critical);
-    } else if (_containsAny(
-      normalized,
-      ['falta de oxigenio', 'baixo oxigenio', 'hipoxia'],
-    )) {
+    } else if (_containsAny(normalized, [
+      'falta de oxigenio',
+      'baixo oxigenio',
+      'hipoxia',
+    ])) {
       setMode(SimulationMode.lowOxygen);
     } else if (_containsAny(normalized, ['febre', 'temperatura alta'])) {
       setMode(SimulationMode.fever);
@@ -236,17 +261,24 @@ class VitalSignsSimulator extends ChangeNotifier {
       setMode(SimulationMode.stress);
     } else if (_containsAny(normalized, ['recuperacao', 'recuperar'])) {
       setMode(SimulationMode.recovery);
-    } else if (_containsAny(normalized, ['normaliza', 'normal', 'estabiliza'])) {
+    } else if (_containsAny(normalized, [
+      'normaliza',
+      'normal',
+      'estabiliza',
+    ])) {
       setMode(SimulationMode.normal);
     } else if (_containsAny(normalized, ['para', 'parar', 'pausa', 'stop'])) {
       setMode(SimulationMode.stopped);
-    } else if (_containsAny(
-      normalized,
-      ['inicia', 'comeca', 'arranca', 'simulacao'],
-    )) {
+    } else if (_containsAny(normalized, [
+      'inicia',
+      'comeca',
+      'arranca',
+      'simulacao',
+    ])) {
       setMode(SimulationMode.normal);
     } else {
-      _lastBotAction = 'Nao reconheci o comando. Mantive o modo ${modeLabel(_mode)}.';
+      _lastBotAction =
+          'Nao reconheci o comando. Mantive o modo ${modeLabel(_mode)}.';
       notifyListeners();
     }
   }
@@ -257,7 +289,8 @@ class VitalSignsSimulator extends ChangeNotifier {
     super.dispose();
   }
 
-  Future<void> _tick() async {
+  void _tick() {
+    _ticksInCurrentMode++;
     final nextVitals = switch (_mode) {
       SimulationMode.normal => _normalVitals(),
       SimulationMode.stress => _stressVitals(),
@@ -271,8 +304,28 @@ class VitalSignsSimulator extends ChangeNotifier {
     _vitals = _withStatusAndAlertLevel(nextVitals);
     notifyListeners();
 
-    await _saveVitals();
-    await _createAutomaticAlerts();
+    final now = DateTime.now();
+    final shouldSave =
+        _lastVitalsSavedAt == null ||
+        now.difference(_lastVitalsSavedAt!) >= _persistenceInterval;
+    if (shouldSave && !_isSavingVitals) {
+      _lastVitalsSavedAt = now;
+      _isSavingVitals = true;
+      unawaited(
+        _saveVitals().whenComplete(() {
+          _isSavingVitals = false;
+        }),
+      );
+    }
+
+    if (!_isCreatingAlerts) {
+      _isCreatingAlerts = true;
+      unawaited(
+        _createAutomaticAlerts().whenComplete(() {
+          _isCreatingAlerts = false;
+        }),
+      );
+    }
   }
 
   Future<void> _saveVitals() async {
@@ -288,24 +341,48 @@ class VitalSignsSimulator extends ChangeNotifier {
 
   VitalSigns _normalVitals() {
     return _vitals.copyWith(
-      heartRate: _range(65, 90),
-      oxygen: _range(96, 99),
-      temperature: _doubleRange(36.3, 37.2),
-      systolicPressure: _range(110, 125),
-      diastolicPressure: _range(70, 85),
-      respiratoryRate: _range(12, 18),
+      heartRate: _moveTowards(_vitals.heartRate, _range(68, 84), 2),
+      oxygen: _moveTowards(_vitals.oxygen, _range(96, 99), 1),
+      temperature: _moveDoubleTowards(
+        _vitals.temperature,
+        _doubleRange(36.4, 37.1),
+        0.1,
+      ),
+      systolicPressure: _moveTowards(
+        _vitals.systolicPressure,
+        _range(110, 125),
+        2,
+      ),
+      diastolicPressure: _moveTowards(
+        _vitals.diastolicPressure,
+        _range(70, 85),
+        2,
+      ),
+      respiratoryRate: _moveTowards(_vitals.respiratoryRate, _range(12, 18), 1),
       measuredAt: DateTime.now(),
     );
   }
 
   VitalSigns _stressVitals() {
     return _vitals.copyWith(
-      heartRate: _range(90, 120),
-      oxygen: _range(94, 98),
-      temperature: _doubleRange(37.1, 38.0),
-      systolicPressure: _range(125, 145),
-      diastolicPressure: _range(82, 94),
-      respiratoryRate: _range(18, 26),
+      heartRate: _moveTowards(_vitals.heartRate, _range(95, 120), 4),
+      oxygen: _moveTowards(_vitals.oxygen, _range(94, 98), 1),
+      temperature: _moveDoubleTowards(
+        _vitals.temperature,
+        _doubleRange(37.1, 38.0),
+        0.15,
+      ),
+      systolicPressure: _moveTowards(
+        _vitals.systolicPressure,
+        _range(125, 145),
+        4,
+      ),
+      diastolicPressure: _moveTowards(
+        _vitals.diastolicPressure,
+        _range(82, 94),
+        3,
+      ),
+      respiratoryRate: _moveTowards(_vitals.respiratoryRate, _range(20, 26), 2),
       measuredAt: DateTime.now(),
     );
   }
@@ -314,9 +391,21 @@ class VitalSignsSimulator extends ChangeNotifier {
     return _vitals.copyWith(
       heartRate: _moveTowards(_vitals.heartRate, _range(130, 160), 6),
       oxygen: _moveTowards(_vitals.oxygen, _range(82, 90), 3),
-      temperature: _moveDoubleTowards(_vitals.temperature, _doubleRange(38.5, 40.0), 0.25),
-      systolicPressure: _moveTowards(_vitals.systolicPressure, _range(76, 92), 5),
-      diastolicPressure: _moveTowards(_vitals.diastolicPressure, _range(45, 62), 4),
+      temperature: _moveDoubleTowards(
+        _vitals.temperature,
+        _doubleRange(38.5, 40.0),
+        0.25,
+      ),
+      systolicPressure: _moveTowards(
+        _vitals.systolicPressure,
+        _range(76, 92),
+        5,
+      ),
+      diastolicPressure: _moveTowards(
+        _vitals.diastolicPressure,
+        _range(45, 62),
+        4,
+      ),
       respiratoryRate: _moveTowards(_vitals.respiratoryRate, _range(26, 34), 3),
       measuredAt: DateTime.now(),
     );
@@ -326,9 +415,21 @@ class VitalSignsSimulator extends ChangeNotifier {
     return _vitals.copyWith(
       heartRate: _moveTowards(_vitals.heartRate, _range(105, 140), 5),
       oxygen: _moveTowards(_vitals.oxygen, _range(84, 89), 3),
-      temperature: _moveDoubleTowards(_vitals.temperature, _doubleRange(36.8, 37.8), 0.15),
-      systolicPressure: _moveTowards(_vitals.systolicPressure, _range(100, 122), 3),
-      diastolicPressure: _moveTowards(_vitals.diastolicPressure, _range(65, 82), 3),
+      temperature: _moveDoubleTowards(
+        _vitals.temperature,
+        _doubleRange(36.8, 37.8),
+        0.15,
+      ),
+      systolicPressure: _moveTowards(
+        _vitals.systolicPressure,
+        _range(100, 122),
+        3,
+      ),
+      diastolicPressure: _moveTowards(
+        _vitals.diastolicPressure,
+        _range(65, 82),
+        3,
+      ),
       respiratoryRate: _moveTowards(_vitals.respiratoryRate, _range(24, 32), 3),
       measuredAt: DateTime.now(),
     );
@@ -338,9 +439,21 @@ class VitalSignsSimulator extends ChangeNotifier {
     return _vitals.copyWith(
       heartRate: _moveTowards(_vitals.heartRate, _range(88, 118), 4),
       oxygen: _moveTowards(_vitals.oxygen, _range(94, 98), 2),
-      temperature: _moveDoubleTowards(_vitals.temperature, _doubleRange(38.5, 40.0), 0.25),
-      systolicPressure: _moveTowards(_vitals.systolicPressure, _range(112, 132), 3),
-      diastolicPressure: _moveTowards(_vitals.diastolicPressure, _range(72, 88), 3),
+      temperature: _moveDoubleTowards(
+        _vitals.temperature,
+        _doubleRange(38.5, 40.0),
+        0.25,
+      ),
+      systolicPressure: _moveTowards(
+        _vitals.systolicPressure,
+        _range(112, 132),
+        3,
+      ),
+      diastolicPressure: _moveTowards(
+        _vitals.diastolicPressure,
+        _range(72, 88),
+        3,
+      ),
       respiratoryRate: _moveTowards(_vitals.respiratoryRate, _range(18, 25), 2),
       measuredAt: DateTime.now(),
     );
@@ -357,13 +470,15 @@ class VitalSignsSimulator extends ChangeNotifier {
       measuredAt: DateTime.now(),
     );
 
-    final isStable = (recovered.heartRate - 78).abs() <= 2 &&
+    final isStable =
+        (recovered.heartRate - 78).abs() <= 2 &&
         (recovered.oxygen - 98).abs() <= 1 &&
         (recovered.temperature - 36.8).abs() <= 0.2 &&
         recovered.systolicPressure >= 110;
 
-    if (isStable) {
+    if (isStable && _ticksInCurrentMode >= 3) {
       _mode = SimulationMode.normal;
+      _ticksInCurrentMode = 0;
       _lastBotAction = 'Paciente recuperado e estabilizado.';
     }
 
@@ -386,7 +501,10 @@ class VitalSignsSimulator extends ChangeNotifier {
     }
 
     if (_mode == SimulationMode.recovery) {
-      return vitals.copyWith(patientStatus: 'Em recuperacao', alertLevel: 'Atencao');
+      return vitals.copyWith(
+        patientStatus: 'Em recuperacao',
+        alertLevel: 'Atencao',
+      );
     }
 
     return vitals.copyWith(patientStatus: 'Normal', alertLevel: 'Normal');
@@ -412,14 +530,16 @@ class VitalSignsSimulator extends ChangeNotifier {
       if (_vitals.temperature > 38.5)
         SimulatorAlert(
           type: 'temperature',
-          message: 'Temperatura acima de 38.5 C: ${_vitals.temperature.toStringAsFixed(1)} C',
+          message:
+              'Temperatura acima de 38.5 C: ${_vitals.temperature.toStringAsFixed(1)} C',
           level: 'Critico',
           createdAt: DateTime.now(),
         ),
       if (_vitals.systolicPressure < 90)
         SimulatorAlert(
           type: 'systolic_pressure',
-          message: 'Pressao sistolica abaixo de 90: ${_vitals.systolicPressure} mmHg',
+          message:
+              'Pressao sistolica abaixo de 90: ${_vitals.systolicPressure} mmHg',
           level: 'Critico',
           createdAt: DateTime.now(),
         ),
@@ -427,7 +547,8 @@ class VitalSignsSimulator extends ChangeNotifier {
 
     for (final alert in rules) {
       final last = _lastAlertByType[alert.type];
-      final canSend = last == null || DateTime.now().difference(last) >= _alertCooldown;
+      final canSend =
+          last == null || DateTime.now().difference(last) >= _alertCooldown;
       if (!canSend) continue;
 
       _lastAlertByType[alert.type] = alert.createdAt;
@@ -482,7 +603,9 @@ class VitalSignsSimulator extends ChangeNotifier {
   int _range(int min, int max) => min + _random.nextInt(max - min + 1);
 
   double _doubleRange(double min, double max) {
-    return double.parse((min + _random.nextDouble() * (max - min)).toStringAsFixed(1));
+    return double.parse(
+      (min + _random.nextDouble() * (max - min)).toStringAsFixed(1),
+    );
   }
 
   int _moveTowards(int current, int target, int maxStep) {

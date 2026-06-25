@@ -1,21 +1,28 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'vital_signs_simulator.dart';
 
 class VitalSignsSimulatorSection extends StatefulWidget {
   final String patientName;
+  final String professionalName;
   final VitalSigns initialVitals;
   final VitalSignsPersistence? persistence;
   final ValueChanged<VitalSigns>? onVitalsChanged;
   final ValueChanged<SimulatorAlert>? onAlertCreated;
+  final ValueChanged<SimulatorAlert>? onAlertConfirmed;
 
   const VitalSignsSimulatorSection({
     super.key,
     required this.patientName,
+    this.professionalName = 'Profissional SAUH',
     required this.initialVitals,
     this.persistence,
     this.onVitalsChanged,
     this.onAlertCreated,
+    this.onAlertConfirmed,
   });
 
   @override
@@ -25,14 +32,18 @@ class VitalSignsSimulatorSection extends StatefulWidget {
 
 class _VitalSignsSimulatorSectionState
     extends State<VitalSignsSimulatorSection> {
-  late final TextEditingController _commandController;
   late final VitalSignsSimulator _simulator;
   final List<VitalSigns> _history = [];
+  Timer? _muteTimer;
+  DateTime? _mutedUntil;
+  String? _lastAlertSignature;
+  String? _confirmedAlertSignature;
+
+  bool get isMuted => _mutedUntil?.isAfter(DateTime.now()) ?? false;
 
   @override
   void initState() {
     super.initState();
-    _commandController = TextEditingController();
     _simulator = VitalSignsSimulator(
       patientName: widget.patientName,
       initialVitals: widget.initialVitals,
@@ -40,14 +51,17 @@ class _VitalSignsSimulatorSectionState
       onAlertCreated: widget.onAlertCreated,
     )..addListener(_handleSimulatorChanged);
     _history.add(widget.initialVitals);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _simulator.start();
+    });
   }
 
   @override
   void dispose() {
+    _muteTimer?.cancel();
     _simulator
       ..removeListener(_handleSimulatorChanged)
       ..dispose();
-    _commandController.dispose();
     super.dispose();
   }
 
@@ -56,23 +70,73 @@ class _VitalSignsSimulatorSectionState
     if (_history.length > 40) {
       _history.removeAt(0);
     }
+    final alert = _simulator.latestAlert;
+    if (alert != null) {
+      final signature = _alertSignature(alert);
+      if (_lastAlertSignature != signature) {
+        _lastAlertSignature = signature;
+        _confirmedAlertSignature = null;
+        if (!isMuted) {
+          unawaited(SystemSound.play(SystemSoundType.alert));
+        }
+      }
+    }
     widget.onVitalsChanged?.call(_simulator.vitals);
     if (mounted) setState(() {});
-  }
-
-  void _sendCommand() {
-    _simulator.processSimulationCommand(_commandController.text);
-    _commandController.clear();
   }
 
   void _setMode(SimulationMode mode) {
     _simulator.setMode(mode);
   }
 
+  String _alertSignature(SimulatorAlert alert) {
+    return '${alert.type}-${alert.createdAt.toIso8601String()}';
+  }
+
+  String _formatExactTime(DateTime value) {
+    return '${value.day.toString().padLeft(2, '0')}/'
+        '${value.month.toString().padLeft(2, '0')}/'
+        '${value.year} '
+        '${value.hour.toString().padLeft(2, '0')}:'
+        '${value.minute.toString().padLeft(2, '0')}:'
+        '${value.second.toString().padLeft(2, '0')}';
+  }
+
+  void _toggleMute() {
+    _muteTimer?.cancel();
+    if (isMuted) {
+      setState(() {
+        _mutedUntil = null;
+      });
+      return;
+    }
+
+    final mutedUntil = DateTime.now().add(const Duration(minutes: 2));
+    setState(() {
+      _mutedUntil = mutedUntil;
+    });
+    _muteTimer = Timer(const Duration(minutes: 2), () {
+      if (mounted) {
+        setState(() {
+          _mutedUntil = null;
+        });
+      }
+    });
+  }
+
+  void _confirmLatestAlert() {
+    final alert = _simulator.latestAlert;
+    if (alert == null) return;
+
+    setState(() {
+      _confirmedAlertSignature = _alertSignature(alert);
+    });
+    widget.onAlertConfirmed?.call(alert);
+  }
+
   @override
   Widget build(BuildContext context) {
     final vitals = _simulator.vitals;
-    final theme = Theme.of(context);
 
     return Card(
       child: Padding(
@@ -80,47 +144,24 @@ class _VitalSignsSimulatorSectionState
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                const Icon(Icons.monitor_heart, color: Colors.blue),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Simulador Inteligente de Sinais Vitais',
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _commandController,
-                    decoration: const InputDecoration(
-                      labelText: 'Comando tipo IA',
-                      hintText: 'Ex: simula febre',
-                      border: OutlineInputBorder(),
-                    ),
-                    onSubmitted: (_) => _sendCommand(),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.send),
-                  label: const Text('Enviar comando'),
-                  onPressed: _sendCommand,
-                ),
-              ],
+            Text(
+              widget.patientName,
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('Iniciar Simulação'),
+                  onPressed: _simulator.isRunning
+                      ? null
+                      : () => _simulator.start(),
+                ),
                 _ModeButton(
                   label: 'Normal',
                   mode: SimulationMode.normal,
@@ -161,6 +202,11 @@ class _VitalSignsSimulatorSectionState
                   icon: const Icon(Icons.stop_circle),
                   label: const Text('Parar'),
                   onPressed: () => _setMode(SimulationMode.stopped),
+                ),
+                OutlinedButton.icon(
+                  icon: Icon(isMuted ? Icons.volume_up : Icons.volume_off),
+                  label: Text(isMuted ? 'Ativar som' : 'Silenciar 2 min'),
+                  onPressed: _toggleMute,
                 ),
               ],
             ),
@@ -223,30 +269,75 @@ class _VitalSignsSimulatorSectionState
                   value: vitals.patientStatus,
                   danger: vitals.alertLevel == 'Critico',
                 ),
+                _VitalChip(
+                  icon: Icons.notification_important,
+                  label: 'Nível de Alerta',
+                  value: vitals.alertLevel,
+                  danger: vitals.alertLevel == 'Critico',
+                ),
               ],
             ),
             const SizedBox(height: 12),
-            SizedBox(
-              height: 190,
-              child: _VitalsTrendChart(history: _history),
-            ),
+            SizedBox(height: 190, child: _VitalsTrendChart(history: _history)),
             if (_simulator.latestAlert != null) ...[
               const SizedBox(height: 12),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.red.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.red.shade200),
-                ),
-                child: Text(
-                  'Alerta automatico: ${_simulator.latestAlert!.message}',
-                  style: TextStyle(
-                    color: Colors.red.shade900,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+              Builder(
+                builder: (context) {
+                  final alert = _simulator.latestAlert!;
+                  final isConfirmed =
+                      _confirmedAlertSignature == _alertSignature(alert);
+
+                  return Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.red.shade200),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Alerta crítico',
+                          style: TextStyle(
+                            color: Colors.red.shade900,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text('Motivo: ${alert.message}'),
+                        Text(
+                          'Hora exata: ${_formatExactTime(alert.createdAt)}',
+                        ),
+                        if (isMuted && _mutedUntil != null)
+                          Text(
+                            'Som silenciado até ${_formatExactTime(_mutedUntil!)}',
+                          ),
+                        if (isConfirmed)
+                          Text(
+                            'Confirmado por: ${widget.professionalName}',
+                            style: const TextStyle(
+                              color: Colors.green,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        const SizedBox(height: 8),
+                        ElevatedButton.icon(
+                          icon: Icon(
+                            isConfirmed ? Icons.check_circle : Icons.done,
+                          ),
+                          label: Text(
+                            isConfirmed
+                                ? 'Alerta confirmado'
+                                : 'Confirmar alerta',
+                          ),
+                          onPressed: isConfirmed ? null : _confirmLatestAlert,
+                        ),
+                      ],
+                    ),
+                  );
+                },
               ),
             ],
             if (_simulator.lastPersistenceError != null) ...[
@@ -275,7 +366,7 @@ class _VitalsTrendChart extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        border: Border.all(color: Colors.blueGrey.withOpacity(0.25)),
+        border: Border.all(color: Colors.blueGrey.withValues(alpha: 0.25)),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
@@ -316,10 +407,7 @@ class _LegendDot extends StatelessWidget {
   final Color color;
   final String label;
 
-  const _LegendDot({
-    required this.color,
-    required this.label,
-  });
+  const _LegendDot({required this.color, required this.label});
 
   @override
   Widget build(BuildContext context) {
@@ -346,7 +434,7 @@ class _VitalsTrendPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final gridPaint = Paint()
-      ..color = Colors.blueGrey.withOpacity(0.14)
+      ..color = Colors.blueGrey.withValues(alpha: 0.14)
       ..strokeWidth = 1;
 
     for (var i = 1; i < 4; i++) {
@@ -409,10 +497,9 @@ class _VitalsTrendPainter extends CustomPainter {
 
     for (var i = 0; i < count; i++) {
       final x = count == 1 ? 0.0 : size.width * i / (count - 1);
-      final normalized =
-          ((values[i] - minValue) / (maxValue - minValue))
-              .clamp(0.0, 1.0)
-              .toDouble();
+      final normalized = ((values[i] - minValue) / (maxValue - minValue))
+          .clamp(0.0, 1.0)
+          .toDouble();
       final y = size.height - normalized * size.height;
       if (i == 0) {
         path.moveTo(x, y);
@@ -447,14 +534,8 @@ class _ModeButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final selected = mode == currentMode;
     return selected
-        ? FilledButton(
-            onPressed: () => onPressed(mode),
-            child: Text(label),
-          )
-        : OutlinedButton(
-            onPressed: () => onPressed(mode),
-            child: Text(label),
-          );
+        ? FilledButton(onPressed: () => onPressed(mode), child: Text(label))
+        : OutlinedButton(onPressed: () => onPressed(mode), child: Text(label));
   }
 }
 
@@ -462,10 +543,7 @@ class _StatusLine extends StatelessWidget {
   final String label;
   final String value;
 
-  const _StatusLine({
-    required this.label,
-    required this.value,
-  });
+  const _StatusLine({required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
@@ -507,7 +585,7 @@ class _VitalChip extends StatelessWidget {
       width: 178,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        border: Border.all(color: color.withOpacity(0.35)),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
