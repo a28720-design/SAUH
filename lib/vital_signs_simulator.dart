@@ -251,7 +251,9 @@ class VitalSignsSimulator extends ChangeNotifier {
       setMode(SimulationMode.critical);
     } else if (_containsAny(normalized, [
       'falta de oxigenio',
+      'falta de oxigénio',
       'baixo oxigenio',
+      'baixo oxigénio',
       'hipoxia',
     ])) {
       setMode(SimulationMode.lowOxygen);
@@ -278,7 +280,7 @@ class VitalSignsSimulator extends ChangeNotifier {
       setMode(SimulationMode.normal);
     } else {
       _lastBotAction =
-          'Nao reconheci o comando. Mantive o modo ${modeLabel(_mode)}.';
+          'Não reconheci o comando. Mantive o modo ${modeLabel(_mode)}.';
       notifyListeners();
     }
   }
@@ -579,12 +581,12 @@ class VitalSignsSimulator extends ChangeNotifier {
   String _messageForMode(SimulationMode mode) {
     return switch (mode) {
       SimulationMode.normal => 'Paciente normalizado.',
-      SimulationMode.stress => 'A simular stress fisiologico.',
-      SimulationMode.critical => 'Paciente colocado em estado critico.',
-      SimulationMode.lowOxygen => 'A simular falta de oxigenio.',
+      SimulationMode.stress => 'A simular stress fisiológico.',
+      SimulationMode.critical => 'Paciente colocado em estado crítico.',
+      SimulationMode.lowOxygen => 'A simular falta de oxigénio.',
       SimulationMode.fever => 'A simular febre progressiva.',
-      SimulationMode.recovery => 'A iniciar recuperacao gradual.',
-      SimulationMode.stopped => 'Simulacao parada.',
+      SimulationMode.recovery => 'A iniciar recuperação gradual.',
+      SimulationMode.stopped => 'Simulação parada.',
     };
   }
 
@@ -592,10 +594,10 @@ class VitalSignsSimulator extends ChangeNotifier {
     return switch (mode) {
       SimulationMode.normal => 'Normal',
       SimulationMode.stress => 'Stress',
-      SimulationMode.critical => 'Critico',
-      SimulationMode.lowOxygen => 'Falta de Oxigenio',
+      SimulationMode.critical => 'Crítico',
+      SimulationMode.lowOxygen => 'Falta de Oxigénio',
       SimulationMode.fever => 'Febre',
-      SimulationMode.recovery => 'Recuperacao',
+      SimulationMode.recovery => 'Recuperação',
       SimulationMode.stopped => 'Parado',
     };
   }

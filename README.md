@@ -11,6 +11,8 @@ flutter doctor -v
 
 Configura um URL e uma chave Supabase válidos antes de testar funcionalidades cloud.
 
+O template visual do email de verificação do Supabase está em `docs/supabase_email_templates/`.
+
 ## Android
 
 Liga um dispositivo com depuração USB ou inicia um emulador Android e executa:
@@ -44,3 +46,14 @@ O Bundle Identifier é `pt.sauh.app`. No Xcode, seleciona a equipa Apple Develop
 flutter analyze
 flutter test
 ```
+
+## Login e permissões
+
+A app tem uma camada local de autenticação e permissões preparada para ser ligada ao Firebase/Firestore. Como o projeto já estava configurado com Supabase, a implementação mantém o projeto compilável sem adicionar dependências Firebase ainda.
+
+Depois de entrar com uma conta administrativa, usa **Gestão de Contas** para criar, pesquisar, editar, ativar e desativar contas profissionais.
+
+Documentação Firestore:
+
+- `docs/firestore_structure.md`
+- `docs/firestore.rules`

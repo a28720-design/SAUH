@@ -1,0 +1,128 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function currentUser() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isActive() {
+      return signedIn() && currentUser().ativo == true;
+    }
+
+    function role() {
+      return currentUser().role;
+    }
+
+    function hospitalId() {
+      return currentUser().hospitalId;
+    }
+
+    function isSuperAdmin() {
+      return isActive() && role() == 'super_admin';
+    }
+
+    function isAdminHospital() {
+      return isActive() && role() == 'admin_hospital';
+    }
+
+    function sameHospital(resourceHospitalId) {
+      return isActive() && hospitalId() == resourceHospitalId;
+    }
+
+    function canReadClinicalData(resourceHospitalId) {
+      return isSuperAdmin() ||
+        sameHospital(resourceHospitalId) &&
+        role() in [
+          'admin_hospital',
+          'diretor_clinico',
+          'chefe_enfermagem',
+          'medico',
+          'enfermeiro',
+          'triagem',
+          'tecnico_emergencia',
+          'administrativo',
+          'auxiliar'
+        ];
+    }
+
+    match /hospitals/{hospitalId} {
+      allow read: if isSuperAdmin() || sameHospital(hospitalId);
+      allow create, update: if isSuperAdmin();
+      allow delete: if false;
+    }
+
+    match /users/{userId} {
+      allow read: if isSuperAdmin() ||
+        isAdminHospital() && sameHospital(resource.data.hospitalId) ||
+        signedIn() && request.auth.uid == userId;
+
+      allow create: if isSuperAdmin() &&
+        request.resource.data.role in [
+          'admin_hospital',
+          'diretor_clinico',
+          'chefe_enfermagem',
+          'medico',
+          'enfermeiro',
+          'triagem',
+          'tecnico_emergencia',
+          'administrativo',
+          'auxiliar'
+        ] ||
+        isAdminHospital() &&
+        request.resource.data.hospitalId == hospitalId() &&
+        request.resource.data.role in [
+          'diretor_clinico',
+          'chefe_enfermagem',
+          'medico',
+          'enfermeiro',
+          'triagem',
+          'tecnico_emergencia',
+          'administrativo',
+          'auxiliar'
+        ];
+
+      allow update: if isSuperAdmin() ||
+        isAdminHospital() &&
+        resource.data.hospitalId == hospitalId() &&
+        request.resource.data.hospitalId == hospitalId() &&
+        request.resource.data.role in [
+          'diretor_clinico',
+          'chefe_enfermagem',
+          'medico',
+          'enfermeiro',
+          'triagem',
+          'tecnico_emergencia',
+          'administrativo',
+          'auxiliar'
+        ];
+
+      allow delete: if false;
+    }
+
+    match /patients/{patientId} {
+      allow read: if canReadClinicalData(resource.data.hospitalId);
+      allow create: if isActive() &&
+        role() in ['admin_hospital', 'diretor_clinico', 'triagem', 'tecnico_emergencia', 'administrativo'] &&
+        request.resource.data.hospitalId == hospitalId();
+      allow update: if isActive() &&
+        sameHospital(resource.data.hospitalId) &&
+        role() in ['admin_hospital', 'diretor_clinico', 'chefe_enfermagem', 'medico', 'enfermeiro', 'triagem', 'tecnico_emergencia', 'administrativo'];
+      allow delete: if false;
+    }
+
+    match /alerts/{alertId} {
+      allow read: if canReadClinicalData(resource.data.hospitalId);
+      allow create: if isActive() &&
+        request.resource.data.hospitalId == hospitalId();
+      allow update: if isActive() &&
+        sameHospital(resource.data.hospitalId) &&
+        role() in ['admin_hospital', 'diretor_clinico', 'chefe_enfermagem', 'medico', 'enfermeiro', 'tecnico_emergencia'];
+      allow delete: if false;
+    }
+  }
+}

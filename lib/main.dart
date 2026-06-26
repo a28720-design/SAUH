@@ -1,8 +1,14 @@
-import 'dart:async';
+﻿import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'models/app_role.dart';
+import 'models/app_user.dart';
+import 'models/hospital.dart';
+import 'services/auth_service.dart';
+import 'services/hospital_service.dart';
+import 'services/permission_service.dart';
 import 'vital_signs_simulator.dart';
 import 'vital_signs_simulator_section.dart';
 
@@ -45,14 +51,80 @@ class SAUHApp extends StatelessWidget {
   }
 }
 
-class LoginPage extends StatelessWidget {
+Widget dashboardForUser(AppUser user) {
+  return switch (user.role) {
+    AppRole.superAdmin => const SuperAdminDashboard(),
+    AppRole.adminHospital => const AdminHospitalDashboard(),
+    AppRole.diretorClinico => const DiretorClinicoDashboard(),
+    AppRole.chefeEnfermagem => const ChefeEnfermagemDashboard(),
+    AppRole.medico => const MedicoDashboard(),
+    AppRole.enfermeiro => const EnfermeiroDashboard(),
+    AppRole.triagem => const TriagemDashboard(),
+    AppRole.tecnicoEmergencia => const TecnicoEmergenciaDashboard(),
+    AppRole.administrativo => const AdministrativoDashboard(),
+    AppRole.auxiliar => const AuxiliarDashboard(),
+  };
+}
+
+class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final emailController = TextEditingController();
-    final passwordController = TextEditingController();
+  State<LoginPage> createState() => _LoginPageState();
+}
 
+class _LoginPageState extends State<LoginPage> {
+  final emailController = TextEditingController();
+  final passwordController = TextEditingController();
+  bool isLoading = false;
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
+  void login() {
+    setState(() {
+      isLoading = true;
+    });
+
+    final result = authService.signIn(
+      emailController.text,
+      passwordController.text,
+    );
+
+    if (!mounted) return;
+    setState(() {
+      isLoading = false;
+    });
+
+    if (!result.isSuccess) {
+      final message = result.error ?? 'Não foi possível iniciar sessão.';
+      if (message.toLowerCase().contains('inativ') ||
+          message.toLowerCase().contains('hospital')) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => AccessDeniedPage(reason: message)),
+        );
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+      return;
+    }
+
+    final user = result.user!;
+    syncAccountProfileFromUser(user);
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => dashboardForUser(user)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFEAF4FF),
       body: SafeArea(
@@ -120,19 +192,8 @@ class LoginPage extends StatelessWidget {
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton(
-                            child: const Text('Entrar'),
-                            onPressed: () {
-                              final email = emailController.text.trim();
-                              if (email.isNotEmpty) {
-                                accountProfile.email = email;
-                              }
-                              Navigator.pushReplacement(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => const DashboardPage(),
-                                ),
-                              );
-                            },
+                            onPressed: isLoading ? null : login,
+                            child: Text(isLoading ? 'A entrar...' : 'Entrar'),
                           ),
                         ),
                       ],
@@ -156,16 +217,42 @@ class ClinicalRecord {
 }
 
 class AccountProfile {
+  String userId = '';
   String name = '';
   String email = '';
   String phone = '';
   String role = '';
+  String hospitalId = '';
   String professionalId = '';
   String department = '';
   String avatarUrl = '';
 }
 
 final accountProfile = AccountProfile();
+
+void syncAccountProfileFromUser(AppUser user) {
+  accountProfile
+    ..userId = user.userId
+    ..name = user.name
+    ..email = user.email
+    ..role = user.role.label
+    ..hospitalId = user.hospitalId ?? ''
+    ..department = user.department;
+}
+
+AppUser? get currentAppUser => authService.currentUser;
+
+Hospital? get currentHospital {
+  return hospitalService.byId(currentAppUser?.hospitalId);
+}
+
+String defaultHospitalId() {
+  return currentAppUser?.hospitalId ?? 'hospital-central';
+}
+
+bool hasPermission(AppPermission permission) {
+  return PermissionService.can(currentAppUser, permission);
+}
 
 enum MedicationStatus { pending, administered, overdue }
 
@@ -231,6 +318,7 @@ class Patient {
   final String name;
   final int age;
   final String room;
+  String hospitalId;
   String healthNumber;
   String careStatus;
   String status;
@@ -258,6 +346,7 @@ class Patient {
     required this.name,
     required this.age,
     required this.room,
+    this.hospitalId = 'hospital-central',
     this.healthNumber = 'Não indicado',
     this.careStatus = 'Em observação',
     required this.status,
@@ -512,6 +601,24 @@ final patients = [
   ),
 ];
 
+List<Patient> visiblePatientsForCurrentUser() {
+  final user = currentAppUser;
+  if (user == null) return const [];
+  if (user.role == AppRole.superAdmin) return patients;
+  if (!hasPermission(AppPermission.viewPatients) &&
+      !hasPermission(AppPermission.viewLimitedData)) {
+    return const [];
+  }
+  return patients
+      .where((patient) => patient.hospitalId == user.hospitalId)
+      .toList();
+}
+
+bool canUsePatient(Patient patient, AppPermission permission) {
+  return hasPermission(permission) &&
+      PermissionService.canAccessHospital(currentAppUser, patient.hospitalId);
+}
+
 class PatientAlert {
   final String patientName;
   final String message;
@@ -541,7 +648,7 @@ List<PatientAlert> generateAlerts() {
   final alerts = <PatientAlert>[];
   final now = DateTime.now();
 
-  for (final patient in patients) {
+  for (final patient in visiblePatientsForCurrentUser()) {
     if (patient.heartRate > 140) {
       alerts.add(
         PatientAlert(
@@ -826,7 +933,7 @@ class EmergencyMapSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rooms = buildEmergencyRooms(patients);
+    final rooms = buildEmergencyRooms(visiblePatientsForCurrentUser());
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -898,77 +1005,1643 @@ class SAUHDrawer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final user = currentAppUser;
+    final canViewPatients =
+        hasPermission(AppPermission.viewPatients) ||
+        hasPermission(AppPermission.viewLimitedData);
+
     return Drawer(
       child: SafeArea(
-        child: Column(
-          children: [
-            const DrawerHeader(
-              child: Row(
+        child: SingleChildScrollView(
+          child: Column(
+            children: [
+              const DrawerHeader(
+                child: Row(
+                  children: [
+                    Icon(Icons.local_hospital, size: 42, color: Colors.blue),
+                    SizedBox(width: 12),
+                    Text(
+                      'SAUH',
+                      style: TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              ListTile(
+                selected: currentPage == 'Painel',
+                leading: const Icon(Icons.dashboard),
+                title: const Text('Painel'),
+                onTap: () => _replacePage(
+                  context,
+                  user == null ? const LoginPage() : dashboardForUser(user),
+                ),
+              ),
+              if (hasPermission(AppPermission.viewPatients))
+                ListTile(
+                  selected: currentPage == 'Simuladores',
+                  leading: const Icon(Icons.monitor_heart),
+                  title: const Text('Simuladores'),
+                  onTap: () => _replacePage(context, const DashboardPage()),
+                ),
+              if (canViewPatients)
+                ListTile(
+                  selected: currentPage == 'Pacientes',
+                  leading: const Icon(Icons.people),
+                  title: const Text('Pacientes'),
+                  onTap: () => _replacePage(context, const PatientsPage()),
+                ),
+              ListTile(
+                selected: currentPage == 'Mapa da Urgência',
+                leading: const Icon(Icons.map),
+                title: const Text('Mapa da Urgência'),
+                onTap: () => _replacePage(context, const EmergencyMapPage()),
+              ),
+              if (hasPermission(AppPermission.viewPatients))
+                ListTile(
+                  selected: currentPage == 'Alertas',
+                  leading: const Icon(Icons.warning),
+                  title: const Text('Alertas'),
+                  onTap: () => _replacePage(context, const AlertsPage()),
+                ),
+              if (hasPermission(AppPermission.createPatient))
+                ListTile(
+                  selected: currentPage == 'Adicionar Paciente',
+                  leading: const Icon(Icons.person_add),
+                  title: const Text('Adicionar Paciente'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const AddPatientPage()),
+                    );
+                  },
+                ),
+              if (hasPermission(AppPermission.registerHospital))
+                ListTile(
+                  selected: currentPage == 'Registar Hospital',
+                  leading: const Icon(Icons.add_business),
+                  title: const Text('Registar Hospital'),
+                  onTap: () =>
+                      _replacePage(context, const RegisterHospitalPage()),
+                ),
+              if (hasPermission(AppPermission.manageUsers))
+                ListTile(
+                  selected: currentPage == 'Gestão de Contas',
+                  leading: const Icon(Icons.admin_panel_settings),
+                  title: const Text('Gestão de Contas'),
+                  onTap: () =>
+                      _replacePage(context, const AccountManagementPage()),
+                ),
+              if (hasPermission(AppPermission.createUsers))
+                ListTile(
+                  selected: currentPage == 'Criar Conta',
+                  leading: const Icon(Icons.person_add_alt_1),
+                  title: const Text('Criar Conta'),
+                  onTap: () => _replacePage(context, const CreateUserPage()),
+                ),
+              ListTile(
+                selected: currentPage == 'Editar Conta',
+                leading: const Icon(Icons.manage_accounts),
+                title: const Text('Editar Conta'),
+                onTap: () => _replacePage(context, const ProfilePage()),
+              ),
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.logout),
+                title: const Text('Sair'),
+                onTap: () {
+                  authService.signOut();
+                  Navigator.pop(context);
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(builder: (_) => const LoginPage()),
+                    (_) => false,
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class AccessDeniedPage extends StatelessWidget {
+  final String reason;
+
+  const AccessDeniedPage({
+    super.key,
+    this.reason = 'A tua conta não tem permissão para aceder a esta área.',
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF3F7FB),
+      body: Center(
+        child: SizedBox(
+          width: 520,
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.local_hospital, size: 42, color: Colors.blue),
-                  SizedBox(width: 12),
-                  Text(
-                    'SAUH',
+                  const Icon(Icons.lock, size: 60, color: Colors.red),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Acesso negado',
                     style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(reason, textAlign: TextAlign.center),
+                  const SizedBox(height: 20),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.login),
+                    label: const Text('Voltar ao login'),
+                    onPressed: () {
+                      authService.signOut();
+                      Navigator.pushAndRemoveUntil(
+                        context,
+                        MaterialPageRoute(builder: (_) => const LoginPage()),
+                        (_) => false,
+                      );
+                    },
                   ),
                 ],
               ),
             ),
-            ListTile(
-              selected: currentPage == 'Painel',
-              leading: const Icon(Icons.dashboard),
-              title: const Text('Painel'),
-              onTap: () => _replacePage(context, const DashboardPage()),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class RoleDashboardShell extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color color;
+  final List<Widget> actions;
+  final List<Widget> sections;
+
+  const RoleDashboardShell({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.color,
+    this.actions = const [],
+    this.sections = const [],
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final user = currentAppUser;
+    if (user == null || !user.active) {
+      return const AccessDeniedPage(
+        reason: 'Sessão inválida ou conta inativa.',
+      );
+    }
+
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      drawer: const SAUHDrawer(currentPage: 'Painel'),
+      body: Container(
+        color: const Color(0xFFF3F7FB),
+        padding: const EdgeInsets.all(16),
+        child: ListView(
+          children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      backgroundColor: color.withAlpha(35),
+                      radius: 30,
+                      child: Icon(icon, color: color, size: 34),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            user.name,
+                            style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text('${user.role.label} • ${user.department}'),
+                          Text(
+                            currentHospital?.name ?? 'Acesso global SAUH',
+                            style: const TextStyle(color: Colors.black54),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-            ListTile(
-              selected: currentPage == 'Pacientes',
-              leading: const Icon(Icons.people),
-              title: const Text('Pacientes'),
-              onTap: () => _replacePage(context, const PatientsPage()),
+            const SizedBox(height: 12),
+            Text(
+              subtitle,
+              style: const TextStyle(fontSize: 16, color: Colors.black87),
             ),
-            ListTile(
-              selected: currentPage == 'Mapa da Urgência',
-              leading: const Icon(Icons.map),
-              title: const Text('Mapa da Urgência'),
-              onTap: () => _replacePage(context, const EmergencyMapPage()),
+            const SizedBox(height: 16),
+            if (actions.isNotEmpty)
+              Wrap(spacing: 12, runSpacing: 12, children: actions),
+            if (sections.isNotEmpty) ...[
+              const SizedBox(height: 18),
+              ...sections,
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class DashboardActionCard extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color color;
+  final Widget page;
+
+  const DashboardActionCard({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.color,
+    required this.page,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 260,
+      child: Card(
+        child: ListTile(
+          leading: CircleAvatar(
+            backgroundColor: color.withAlpha(35),
+            child: Icon(icon, color: color),
+          ),
+          title: Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+          subtitle: Text(subtitle),
+          onTap: () {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (_) => page),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class SuperAdminDashboard extends StatelessWidget {
+  const SuperAdminDashboard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!hasPermission(AppPermission.registerHospital)) {
+      return const AccessDeniedPage();
+    }
+
+    final activeHospitals = hospitalService.hospitals
+        .where((hospital) => hospital.active)
+        .length;
+
+    return RoleDashboardShell(
+      title: 'Painel Super Admin',
+      subtitle:
+          'Gestão global do sistema SAUH: hospitais, administradores e estado geral.',
+      icon: Icons.security,
+      color: Colors.deepPurple,
+      actions: const [
+        DashboardActionCard(
+          title: 'Registar hospital',
+          subtitle: 'Criar nova unidade hospitalar',
+          icon: Icons.add_business,
+          color: Colors.blue,
+          page: RegisterHospitalPage(),
+        ),
+        DashboardActionCard(
+          title: 'Criar coordenador',
+          subtitle: 'Associar coordenador à urgência',
+          icon: Icons.person_add_alt_1,
+          color: Colors.green,
+          page: CreateUserPage(),
+        ),
+        DashboardActionCard(
+          title: 'Gestão de contas',
+          subtitle: 'Criar e editar contas profissionais',
+          icon: Icons.admin_panel_settings,
+          color: Colors.orange,
+          page: AccountManagementPage(),
+        ),
+        DashboardActionCard(
+          title: 'Simuladores',
+          subtitle: 'Monitorizar sinais vitais em tempo real',
+          icon: Icons.monitor_heart,
+          color: Colors.red,
+          page: DashboardPage(),
+        ),
+      ],
+      sections: [
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            SizedBox(
+              width: 220,
+              child: InfoCard(
+                title: 'Hospitais',
+                value: '${hospitalService.hospitals.length}',
+                icon: Icons.local_hospital,
+                color: Colors.blue,
+              ),
             ),
-            ListTile(
-              selected: currentPage == 'Alertas',
-              leading: const Icon(Icons.warning),
-              title: const Text('Alertas'),
-              onTap: () => _replacePage(context, const AlertsPage()),
+            SizedBox(
+              width: 220,
+              child: InfoCard(
+                title: 'Ativos',
+                value: '$activeHospitals',
+                icon: Icons.check_circle,
+                color: Colors.green,
+              ),
             ),
-            ListTile(
-              selected: currentPage == 'Adicionar Paciente',
-              leading: const Icon(Icons.person_add),
-              title: const Text('Adicionar Paciente'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
+            SizedBox(
+              width: 220,
+              child: InfoCard(
+                title: 'Contas',
+                value: '${authService.users.length}',
+                icon: Icons.people,
+                color: Colors.orange,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'Hospitais registados',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+        for (final hospital in hospitalService.hospitals)
+          Card(
+            child: SwitchListTile(
+              value: hospital.active,
+              title: Text(hospital.name),
+              subtitle: Text(
+                '${hospital.hospitalCode} • ${hospital.address} • ${hospital.contact}',
+              ),
+              secondary: const Icon(Icons.local_hospital),
+              onChanged: (value) {
+                hospitalService.setHospitalActive(hospital.hospitalId, value);
+                Navigator.pushReplacement(
                   context,
-                  MaterialPageRoute(builder: (_) => const AddPatientPage()),
+                  MaterialPageRoute(
+                    builder: (_) => const SuperAdminDashboard(),
+                  ),
                 );
               },
             ),
-            ListTile(
-              selected: currentPage == 'Editar Conta',
-              leading: const Icon(Icons.manage_accounts),
-              title: const Text('Editar Conta'),
-              onTap: () => _replacePage(context, const ProfilePage()),
+          ),
+      ],
+    );
+  }
+}
+
+class AdminHospitalDashboard extends StatelessWidget {
+  const AdminHospitalDashboard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!hasPermission(AppPermission.manageHospital)) {
+      return const AccessDeniedPage();
+    }
+
+    final userCount = authService.usersVisibleTo(currentAppUser).length;
+    final patientCount = visiblePatientsForCurrentUser().length;
+    final alertCount = generateAlerts().length;
+
+    return RoleDashboardShell(
+      title: 'Painel Coordenador da Urgência',
+      subtitle:
+          'Gestão da urgência: profissionais, pacientes, salas/camas e visão operacional.',
+      icon: Icons.local_hospital,
+      color: Colors.blue,
+      actions: const [
+        DashboardActionCard(
+          title: 'Criar utilizador',
+          subtitle: 'Criar cargos da equipa de urgência',
+          icon: Icons.person_add_alt_1,
+          color: Colors.green,
+          page: CreateUserPage(),
+        ),
+        DashboardActionCard(
+          title: 'Gerir utilizadores',
+          subtitle: 'Ativar/desativar profissionais',
+          icon: Icons.admin_panel_settings,
+          color: Colors.orange,
+          page: AccountManagementPage(),
+        ),
+        DashboardActionCard(
+          title: 'Dashboard clínico',
+          subtitle: 'Pacientes, simuladores e alertas',
+          icon: Icons.dashboard,
+          color: Colors.blue,
+          page: DashboardPage(),
+        ),
+      ],
+      sections: [
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            SizedBox(
+              width: 220,
+              child: InfoCard(
+                title: 'Profissionais',
+                value: '$userCount',
+                icon: Icons.people,
+                color: Colors.blue,
+              ),
             ),
-            const Spacer(),
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.logout),
-              title: const Text('Sair'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.pushAndRemoveUntil(
+            SizedBox(
+              width: 220,
+              child: InfoCard(
+                title: 'Pacientes',
+                value: '$patientCount',
+                icon: Icons.personal_injury,
+                color: Colors.green,
+              ),
+            ),
+            SizedBox(
+              width: 220,
+              child: InfoCard(
+                title: 'Alertas',
+                value: '$alertCount',
+                icon: Icons.warning,
+                color: Colors.orange,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        EmergencyMapSection(
+          onPatientSelected: (patient) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => PatientDetailsPage(patient: patient),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class MedicoDashboard extends StatelessWidget {
+  const MedicoDashboard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!hasPermission(AppPermission.viewPatients)) {
+      return const AccessDeniedPage();
+    }
+    return const RoleDashboardShell(
+      title: 'Painel Médico',
+      subtitle:
+          'Consulta fichas clínicas, valida medicação, confirma alertas críticos e acompanha evolução.',
+      icon: Icons.medical_services,
+      color: Colors.red,
+      actions: [
+        DashboardActionCard(
+          title: 'Pacientes',
+          subtitle: 'Abrir lista e ficha clínica',
+          icon: Icons.people,
+          color: Colors.blue,
+          page: PatientsPage(),
+        ),
+        DashboardActionCard(
+          title: 'Alertas',
+          subtitle: 'Ver alertas clínicos ativos',
+          icon: Icons.warning,
+          color: Colors.orange,
+          page: AlertsPage(),
+        ),
+        DashboardActionCard(
+          title: 'Monitorização',
+          subtitle: 'Abrir sinais vitais em tempo real',
+          icon: Icons.monitor_heart,
+          color: Colors.green,
+          page: DashboardPage(),
+        ),
+      ],
+    );
+  }
+}
+
+class DiretorClinicoDashboard extends StatelessWidget {
+  const DiretorClinicoDashboard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!hasPermission(AppPermission.viewPatients)) {
+      return const AccessDeniedPage();
+    }
+    return const RoleDashboardShell(
+      title: 'Painel Diretor Clínico',
+      subtitle:
+          'Supervisão clínica da urgência, validação de decisões críticas, medicação e acompanhamento global.',
+      icon: Icons.supervisor_account,
+      color: Colors.deepPurple,
+      actions: [
+        DashboardActionCard(
+          title: 'Simuladores',
+          subtitle: 'Monitorizar sinais vitais em tempo real',
+          icon: Icons.monitor_heart,
+          color: Colors.red,
+          page: DashboardPage(),
+        ),
+        DashboardActionCard(
+          title: 'Pacientes',
+          subtitle: 'Consultar e editar fichas clínicas',
+          icon: Icons.people,
+          color: Colors.blue,
+          page: PatientsPage(),
+        ),
+        DashboardActionCard(
+          title: 'Alertas',
+          subtitle: 'Confirmar alertas críticos',
+          icon: Icons.warning,
+          color: Colors.orange,
+          page: AlertsPage(),
+        ),
+      ],
+    );
+  }
+}
+
+class EnfermeiroDashboard extends StatelessWidget {
+  const EnfermeiroDashboard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!hasPermission(AppPermission.viewPatients)) {
+      return const AccessDeniedPage();
+    }
+    return const RoleDashboardShell(
+      title: 'Painel Enfermeiro',
+      subtitle:
+          'Atualiza sinais vitais, regista medicação administrada, observa pacientes e confirma alertas vistos.',
+      icon: Icons.health_and_safety,
+      color: Colors.teal,
+      actions: [
+        DashboardActionCard(
+          title: 'Pacientes',
+          subtitle: 'Atualizar sinais e medicação',
+          icon: Icons.people,
+          color: Colors.blue,
+          page: PatientsPage(),
+        ),
+        DashboardActionCard(
+          title: 'Alertas',
+          subtitle: 'Confirmar alertas vistos',
+          icon: Icons.notification_important,
+          color: Colors.orange,
+          page: AlertsPage(),
+        ),
+        DashboardActionCard(
+          title: 'Monitorização',
+          subtitle: 'Ver simuladores vitais',
+          icon: Icons.monitor_heart,
+          color: Colors.green,
+          page: DashboardPage(),
+        ),
+      ],
+    );
+  }
+}
+
+class ChefeEnfermagemDashboard extends StatelessWidget {
+  const ChefeEnfermagemDashboard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!hasPermission(AppPermission.viewPatients)) {
+      return const AccessDeniedPage();
+    }
+    return const RoleDashboardShell(
+      title: 'Painel Chefe de Enfermagem',
+      subtitle:
+          'Coordenação da equipa de enfermagem, acompanhamento de sinais vitais, medicação e alertas.',
+      icon: Icons.health_and_safety,
+      color: Colors.teal,
+      actions: [
+        DashboardActionCard(
+          title: 'Simuladores',
+          subtitle: 'Acompanhar sinais vitais em tempo real',
+          icon: Icons.monitor_heart,
+          color: Colors.green,
+          page: DashboardPage(),
+        ),
+        DashboardActionCard(
+          title: 'Pacientes',
+          subtitle: 'Atualizar sinais, medicação e observações',
+          icon: Icons.people,
+          color: Colors.blue,
+          page: PatientsPage(),
+        ),
+        DashboardActionCard(
+          title: 'Alertas',
+          subtitle: 'Confirmar alertas vistos',
+          icon: Icons.notification_important,
+          color: Colors.orange,
+          page: AlertsPage(),
+        ),
+      ],
+    );
+  }
+}
+
+class TecnicoEmergenciaDashboard extends StatelessWidget {
+  const TecnicoEmergenciaDashboard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!hasPermission(AppPermission.viewPatients)) {
+      return const AccessDeniedPage();
+    }
+    return const RoleDashboardShell(
+      title: 'Painel Técnico de Emergência',
+      subtitle:
+          'Apoio operacional na urgência, sinais vitais, alertas e encaminhamento rápido.',
+      icon: Icons.emergency,
+      color: Colors.red,
+      actions: [
+        DashboardActionCard(
+          title: 'Simuladores',
+          subtitle: 'Acompanhar sinais vitais',
+          icon: Icons.monitor_heart,
+          color: Colors.green,
+          page: DashboardPage(),
+        ),
+        DashboardActionCard(
+          title: 'Pacientes',
+          subtitle: 'Atualizar acompanhamento',
+          icon: Icons.people,
+          color: Colors.blue,
+          page: PatientsPage(),
+        ),
+      ],
+    );
+  }
+}
+
+class AdministrativoDashboard extends StatelessWidget {
+  const AdministrativoDashboard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!hasPermission(AppPermission.viewPatients)) {
+      return const AccessDeniedPage();
+    }
+    return const RoleDashboardShell(
+      title: 'Painel Administrativo',
+      subtitle:
+          'Registo administrativo, criação inicial de fichas e acompanhamento de salas/listas.',
+      icon: Icons.assignment_ind,
+      color: Colors.blueGrey,
+      actions: [
+        DashboardActionCard(
+          title: 'Nova ficha',
+          subtitle: 'Registar entrada do paciente',
+          icon: Icons.person_add,
+          color: Colors.green,
+          page: AddPatientPage(),
+        ),
+        DashboardActionCard(
+          title: 'Pacientes',
+          subtitle: 'Pesquisar pacientes e salas',
+          icon: Icons.people,
+          color: Colors.blue,
+          page: PatientsPage(),
+        ),
+      ],
+    );
+  }
+}
+
+class AuxiliarDashboard extends StatelessWidget {
+  const AuxiliarDashboard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!hasPermission(AppPermission.viewPatients)) {
+      return const AccessDeniedPage();
+    }
+    return const RoleDashboardShell(
+      title: 'Painel Assistente Operacional',
+      subtitle:
+          'Acesso de apoio com visualização de pacientes, salas e estado assistencial.',
+      icon: Icons.support_agent,
+      color: Colors.brown,
+      actions: [
+        DashboardActionCard(
+          title: 'Pacientes',
+          subtitle: 'Consultar lista de pacientes',
+          icon: Icons.people,
+          color: Colors.blue,
+          page: PatientsPage(),
+        ),
+        DashboardActionCard(
+          title: 'Mapa da Urgência',
+          subtitle: 'Ver salas e ocupação',
+          icon: Icons.map,
+          color: Colors.orange,
+          page: EmergencyMapPage(),
+        ),
+      ],
+    );
+  }
+}
+
+class TriagemDashboard extends StatelessWidget {
+  const TriagemDashboard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!hasPermission(AppPermission.createPatient)) {
+      return const AccessDeniedPage();
+    }
+    return const RoleDashboardShell(
+      title: 'Painel Triagem',
+      subtitle:
+          'Cria a ficha inicial do paciente, regista sintomas e define prioridade de triagem.',
+      icon: Icons.fact_check,
+      color: Colors.indigo,
+      actions: [
+        DashboardActionCard(
+          title: 'Nova ficha',
+          subtitle: 'Registar paciente na urgência',
+          icon: Icons.person_add,
+          color: Colors.green,
+          page: AddPatientPage(),
+        ),
+        DashboardActionCard(
+          title: 'Lista de espera',
+          subtitle: 'Pesquisar pacientes em espera',
+          icon: Icons.people,
+          color: Colors.blue,
+          page: PatientsPage(),
+        ),
+      ],
+    );
+  }
+}
+
+class RegisterHospitalPage extends StatefulWidget {
+  const RegisterHospitalPage({super.key});
+
+  @override
+  State<RegisterHospitalPage> createState() => _RegisterHospitalPageState();
+}
+
+class _RegisterHospitalPageState extends State<RegisterHospitalPage> {
+  final nameController = TextEditingController();
+  final addressController = TextEditingController();
+  final contactController = TextEditingController();
+  final codeController = TextEditingController();
+  bool active = true;
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    addressController.dispose();
+    contactController.dispose();
+    codeController.dispose();
+    super.dispose();
+  }
+
+  void saveHospital() {
+    if (!hasPermission(AppPermission.registerHospital)) return;
+    if (nameController.text.trim().isEmpty ||
+        addressController.text.trim().isEmpty ||
+        contactController.text.trim().isEmpty ||
+        codeController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Preenche todos os campos do hospital.')),
+      );
+      return;
+    }
+
+    hospitalService.registerHospital(
+      name: nameController.text.trim(),
+      address: addressController.text.trim(),
+      contact: contactController.text.trim(),
+      hospitalCode: codeController.text.trim(),
+      active: active,
+      createdBy: currentAppUser?.userId ?? 'local',
+    );
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Hospital registado. Agora podes criar o coordenador da urgência.',
+        ),
+      ),
+    );
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => const CreateUserPage()),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!hasPermission(AppPermission.registerHospital)) {
+      return const AccessDeniedPage();
+    }
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Registar Hospital')),
+      drawer: const SAUHDrawer(currentPage: 'Registar Hospital'),
+      body: Center(
+        child: SizedBox(
+          width: 640,
+          child: Card(
+            margin: const EdgeInsets.all(16),
+            child: ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                const Text(
+                  'Dados do hospital',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Nome',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: addressController,
+                  decoration: const InputDecoration(
+                    labelText: 'Morada',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: contactController,
+                  decoration: const InputDecoration(
+                    labelText: 'Contacto',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: codeController,
+                  decoration: const InputDecoration(
+                    labelText: 'Código interno',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SwitchListTile(
+                  value: active,
+                  title: const Text('Hospital ativo'),
+                  onChanged: (value) => setState(() => active = value),
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.save),
+                  label: const Text('Guardar Hospital'),
+                  onPressed: saveHospital,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class CreateUserPage extends StatefulWidget {
+  const CreateUserPage({super.key});
+
+  @override
+  State<CreateUserPage> createState() => _CreateUserPageState();
+}
+
+class _CreateUserPageState extends State<CreateUserPage> {
+  final nameController = TextEditingController();
+  final emailController = TextEditingController();
+  final passwordController = TextEditingController();
+  final departmentController = TextEditingController();
+  AppRole? selectedRole;
+  String? selectedHospitalId;
+  bool active = true;
+
+  @override
+  void initState() {
+    super.initState();
+    final creator = currentAppUser;
+    final roles = AppRole.values
+        .where((role) => PermissionService.canCreateRole(creator, role))
+        .toList();
+    selectedRole = roles.isEmpty ? null : roles.first;
+    selectedHospitalId =
+        creator?.hospitalId ?? hospitalService.hospitals.first.hospitalId;
+  }
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    emailController.dispose();
+    passwordController.dispose();
+    departmentController.dispose();
+    super.dispose();
+  }
+
+  void createUser() {
+    final creator = currentAppUser;
+    if (creator == null || !hasPermission(AppPermission.createUsers)) {
+      return;
+    }
+    if (selectedRole == null ||
+        nameController.text.trim().isEmpty ||
+        emailController.text.trim().isEmpty ||
+        passwordController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Preenche nome, email, password e cargo.'),
+        ),
+      );
+      return;
+    }
+
+    try {
+      final user = authService.createUser(
+        creator: creator,
+        name: nameController.text.trim(),
+        email: emailController.text.trim(),
+        temporaryPassword: passwordController.text,
+        role: selectedRole!,
+        department: departmentController.text.trim().isEmpty
+            ? 'Não definido'
+            : departmentController.text.trim(),
+        active: active,
+        hospitalId: selectedHospitalId,
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Utilizador criado: ${user.email}')),
+      );
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const AccountManagementPage()),
+      );
+    } catch (error) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final creator = currentAppUser;
+    final roles = AppRole.values
+        .where((role) => PermissionService.canCreateRole(creator, role))
+        .toList();
+
+    if (creator == null ||
+        !hasPermission(AppPermission.createUsers) ||
+        roles.isEmpty) {
+      return const AccessDeniedPage();
+    }
+
+    final canChooseHospital = creator.role == AppRole.superAdmin;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Criar Conta')),
+      drawer: const SAUHDrawer(currentPage: 'Criar Conta'),
+      body: Center(
+        child: SizedBox(
+          width: 640,
+          child: Card(
+            margin: const EdgeInsets.all(16),
+            child: ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                const Text(
+                  'Conta profissional',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Nome',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: emailController,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(
+                    labelText: 'Email',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: passwordController,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Password temporária',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<AppRole>(
+                  initialValue: selectedRole,
+                  decoration: const InputDecoration(
+                    labelText: 'Cargo',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: [
+                    for (final role in roles)
+                      DropdownMenuItem(value: role, child: Text(role.label)),
+                  ],
+                  onChanged: (value) => setState(() => selectedRole = value),
+                ),
+                const SizedBox(height: 12),
+                if (canChooseHospital)
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedHospitalId,
+                    decoration: const InputDecoration(
+                      labelText: 'Hospital',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      for (final hospital in hospitalService.hospitals)
+                        DropdownMenuItem(
+                          value: hospital.hospitalId,
+                          child: Text(hospital.name),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      setState(() => selectedHospitalId = value);
+                    },
+                  )
+                else
+                  InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Hospital',
+                      border: OutlineInputBorder(),
+                    ),
+                    child: Text(currentHospital?.name ?? 'Sem hospital'),
+                  ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: departmentController,
+                  decoration: const InputDecoration(
+                    labelText: 'Departamento (opcional)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SwitchListTile(
+                  value: active,
+                  title: const Text('Conta ativa'),
+                  onChanged: (value) => setState(() => active = value),
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.person_add_alt_1),
+                  label: const Text('Criar Conta'),
+                  onPressed: createUser,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class EditUserPage extends StatefulWidget {
+  final AppUser user;
+
+  const EditUserPage({super.key, required this.user});
+
+  @override
+  State<EditUserPage> createState() => _EditUserPageState();
+}
+
+class _EditUserPageState extends State<EditUserPage> {
+  late final TextEditingController nameController;
+  late final TextEditingController emailController;
+  late final TextEditingController departmentController;
+  late final TextEditingController passwordController;
+  late AppRole selectedRole;
+  late String? selectedHospitalId;
+  late bool active;
+
+  @override
+  void initState() {
+    super.initState();
+    final user = widget.user;
+    nameController = TextEditingController(text: user.name);
+    emailController = TextEditingController(text: user.email);
+    departmentController = TextEditingController(text: user.department);
+    passwordController = TextEditingController();
+    selectedRole = user.role;
+    selectedHospitalId = user.hospitalId;
+    active = user.active;
+  }
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    emailController.dispose();
+    departmentController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
+  void saveUser() {
+    final actor = currentAppUser;
+    if (actor == null) return;
+
+    try {
+      authService.updateUser(
+        actor: actor,
+        target: widget.user,
+        name: nameController.text,
+        email: emailController.text,
+        role: selectedRole,
+        hospitalId: selectedHospitalId,
+        department: departmentController.text,
+        active: active,
+        newPassword: passwordController.text,
+      );
+      if (widget.user.userId == actor.userId) {
+        syncAccountProfileFromUser(widget.user);
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Conta atualizada: ${widget.user.email}')),
+      );
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const AccountManagementPage()),
+      );
+    } catch (error) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final actor = currentAppUser;
+    if (actor == null || !hasPermission(AppPermission.manageUsers)) {
+      return const AccessDeniedPage();
+    }
+
+    final editableRoles = authService.editableRolesFor(actor, widget.user);
+    if (editableRoles.isEmpty) {
+      return const AccessDeniedPage(
+        reason: 'Sem permissão para editar esta conta.',
+      );
+    }
+    if (!editableRoles.contains(selectedRole)) {
+      selectedRole = editableRoles.first;
+    }
+
+    final canChooseHospital =
+        actor.role == AppRole.superAdmin && selectedRole != AppRole.superAdmin;
+    if (selectedRole == AppRole.superAdmin) {
+      selectedHospitalId = null;
+    } else {
+      selectedHospitalId ??= hospitalService.hospitals.first.hospitalId;
+    }
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Editar Conta')),
+      drawer: const SAUHDrawer(currentPage: 'Gestão de Contas'),
+      body: Center(
+        child: SizedBox(
+          width: 680,
+          child: Card(
+            margin: const EdgeInsets.all(16),
+            child: ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                const Text(
+                  'Editar conta profissional',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Nome',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: emailController,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(
+                    labelText: 'Email',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<AppRole>(
+                  initialValue: selectedRole,
+                  decoration: const InputDecoration(
+                    labelText: 'Cargo',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: [
+                    for (final role in editableRoles)
+                      DropdownMenuItem(value: role, child: Text(role.label)),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) {
+                      setState(() => selectedRole = value);
+                    }
+                  },
+                ),
+                const SizedBox(height: 12),
+                if (selectedRole != AppRole.superAdmin)
+                  if (canChooseHospital)
+                    DropdownButtonFormField<String>(
+                      initialValue: selectedHospitalId,
+                      decoration: const InputDecoration(
+                        labelText: 'Hospital',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: [
+                        for (final hospital in hospitalService.hospitals)
+                          DropdownMenuItem(
+                            value: hospital.hospitalId,
+                            child: Text(hospital.name),
+                          ),
+                      ],
+                      onChanged: (value) {
+                        setState(() => selectedHospitalId = value);
+                      },
+                    )
+                  else
+                    InputDecorator(
+                      decoration: const InputDecoration(
+                        labelText: 'Hospital',
+                        border: OutlineInputBorder(),
+                      ),
+                      child: Text(
+                        hospitalService.byId(selectedHospitalId)?.name ??
+                            currentHospital?.name ??
+                            'Sem hospital',
+                      ),
+                    ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: departmentController,
+                  decoration: const InputDecoration(
+                    labelText: 'Departamento (opcional)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: passwordController,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Nova password opcional',
+                    helperText: 'Deixa vazio para manter a password atual.',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SwitchListTile(
+                  value: active,
+                  title: const Text('Conta ativa'),
+                  subtitle: const Text('Contas inativas não conseguem entrar.'),
+                  onChanged: widget.user.userId == actor.userId
+                      ? null
+                      : (value) => setState(() => active = value),
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.save),
+                  label: const Text('Guardar Alterações'),
+                  onPressed: saveUser,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class ManageUsersPage extends StatefulWidget {
+  const ManageUsersPage({super.key});
+
+  @override
+  State<ManageUsersPage> createState() => _ManageUsersPageState();
+}
+
+class _ManageUsersPageState extends State<ManageUsersPage> {
+  final searchController = TextEditingController();
+  String searchText = '';
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final actor = currentAppUser;
+    if (actor == null || !hasPermission(AppPermission.manageUsers)) {
+      return const AccessDeniedPage();
+    }
+
+    final normalizedSearch = searchText.toLowerCase().trim();
+    final sourceUsers = authService.usersVisibleTo(actor);
+    final users = sourceUsers.where((user) {
+      final hospital = hospitalService.byId(user.hospitalId);
+      return normalizedSearch.isEmpty ||
+          user.name.toLowerCase().contains(normalizedSearch) ||
+          user.email.toLowerCase().contains(normalizedSearch) ||
+          user.role.label.toLowerCase().contains(normalizedSearch) ||
+          user.department.toLowerCase().contains(normalizedSearch) ||
+          (hospital?.name.toLowerCase().contains(normalizedSearch) ?? false);
+    }).toList();
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Gestão de Contas')),
+      drawer: const SAUHDrawer(currentPage: 'Gestão de Contas'),
+      floatingActionButton: hasPermission(AppPermission.createUsers)
+          ? FloatingActionButton.extended(
+              icon: const Icon(Icons.person_add_alt_1),
+              label: const Text('Criar Conta'),
+              onPressed: () {
+                Navigator.pushReplacement(
                   context,
-                  MaterialPageRoute(builder: (_) => const LoginPage()),
-                  (_) => false,
+                  MaterialPageRoute(builder: (_) => const CreateUserPage()),
                 );
               },
+            )
+          : null,
+      body: Container(
+        color: const Color(0xFFF3F7FB),
+        padding: const EdgeInsets.all(16),
+        child: users.isEmpty
+            ? const Center(child: Text('Sem utilizadores visíveis.'))
+            : ListView.builder(
+                itemCount: users.length,
+                itemBuilder: (context, index) {
+                  final user = users[index];
+                  final hospital = hospitalService.byId(user.hospitalId);
+                  return Card(
+                    child: SwitchListTile(
+                      value: user.active,
+                      title: Text(user.name),
+                      subtitle: Text(
+                        '${user.email} • ${user.role.label} • ${hospital?.name ?? 'Global'}',
+                      ),
+                      secondary: Icon(
+                        user.active ? Icons.verified_user : Icons.block,
+                        color: user.active ? Colors.green : Colors.red,
+                      ),
+                      onChanged: user.userId == actor.userId
+                          ? null
+                          : (value) {
+                              try {
+                                authService.setUserActive(actor, user, value);
+                                setState(() {});
+                              } catch (error) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text(error.toString())),
+                                );
+                              }
+                            },
+                    ),
+                  );
+                },
+              ),
+      ),
+    );
+  }
+}
+
+class AccountManagementPage extends StatefulWidget {
+  const AccountManagementPage({super.key});
+
+  @override
+  State<AccountManagementPage> createState() => _AccountManagementPageState();
+}
+
+class _AccountManagementPageState extends State<AccountManagementPage> {
+  final searchController = TextEditingController();
+  String searchText = '';
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final actor = currentAppUser;
+    if (actor == null || !hasPermission(AppPermission.manageUsers)) {
+      return const AccessDeniedPage();
+    }
+
+    final normalizedSearch = searchText.toLowerCase().trim();
+    final sourceUsers = authService.usersVisibleTo(actor);
+    final users = sourceUsers.where((user) {
+      final hospital = hospitalService.byId(user.hospitalId);
+      return normalizedSearch.isEmpty ||
+          user.name.toLowerCase().contains(normalizedSearch) ||
+          user.email.toLowerCase().contains(normalizedSearch) ||
+          user.role.label.toLowerCase().contains(normalizedSearch) ||
+          user.department.toLowerCase().contains(normalizedSearch) ||
+          (hospital?.name.toLowerCase().contains(normalizedSearch) ?? false);
+    }).toList();
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Gestão de Contas')),
+      drawer: const SAUHDrawer(currentPage: 'Gestão de Contas'),
+      floatingActionButton: hasPermission(AppPermission.createUsers)
+          ? FloatingActionButton.extended(
+              icon: const Icon(Icons.person_add_alt_1),
+              label: const Text('Criar Conta'),
+              onPressed: () {
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (_) => const CreateUserPage()),
+                );
+              },
+            )
+          : null,
+      body: Container(
+        color: const Color(0xFFF3F7FB),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    const Icon(Icons.admin_panel_settings, size: 34),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Gestão de contas profissionais',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            'Criar, pesquisar, editar, ativar e desativar contas.',
+                            style: TextStyle(color: Colors.grey.shade700),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Text(
+                      '${users.length}/${sourceUsers.length}',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: searchController,
+              decoration: const InputDecoration(
+                labelText:
+                    'Pesquisar por nome, email, cargo, hospital ou departamento',
+                prefixIcon: Icon(Icons.search),
+                border: OutlineInputBorder(),
+                filled: true,
+                fillColor: Colors.white,
+              ),
+              onChanged: (value) => setState(() => searchText = value),
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: users.isEmpty
+                  ? const Center(child: Text('Sem contas encontradas.'))
+                  : ListView.builder(
+                      itemCount: users.length,
+                      itemBuilder: (context, index) {
+                        final user = users[index];
+                        final hospital = hospitalService.byId(user.hospitalId);
+                        return Card(
+                          child: ListTile(
+                            leading: CircleAvatar(
+                              backgroundColor: user.active
+                                  ? Colors.green.shade100
+                                  : Colors.red.shade100,
+                              child: Icon(
+                                user.active ? Icons.verified_user : Icons.block,
+                                color: user.active ? Colors.green : Colors.red,
+                              ),
+                            ),
+                            title: Text(user.name),
+                            subtitle: Text(
+                              '${user.email} • ${user.role.label} • ${hospital?.name ?? 'Global'} • ${user.department}',
+                            ),
+                            trailing: Wrap(
+                              spacing: 8,
+                              children: [
+                                OutlinedButton.icon(
+                                  icon: const Icon(Icons.edit),
+                                  label: const Text('Editar'),
+                                  onPressed: () async {
+                                    await Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) =>
+                                            EditUserPage(user: user),
+                                      ),
+                                    );
+                                    if (mounted) setState(() {});
+                                  },
+                                ),
+                                Switch(
+                                  value: user.active,
+                                  onChanged: user.userId == actor.userId
+                                      ? null
+                                      : (value) {
+                                          try {
+                                            authService.setUserActive(
+                                              actor,
+                                              user,
+                                              value,
+                                            );
+                                            setState(() {});
+                                          } catch (error) {
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
+                                              SnackBar(
+                                                content: Text(error.toString()),
+                                              ),
+                                            );
+                                          }
+                                        },
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
             ),
           ],
         ),
@@ -988,14 +2661,18 @@ class _DashboardPageState extends State<DashboardPage> {
   bool isLoading = false;
   final List<int> simulatorPatientIndexes = [0, 1, 2];
 
-  int get simulatorCount => patients.length < 3 ? patients.length : 3;
+  int get simulatorCount {
+    final visiblePatients = visiblePatientsForCurrentUser();
+    return visiblePatients.length < 3 ? visiblePatients.length : 3;
+  }
 
   int patientIndexForSimulator(int simulatorIndex) {
+    final visiblePatients = visiblePatientsForCurrentUser();
     final selectedIndex = simulatorPatientIndexes[simulatorIndex];
-    if (selectedIndex >= 0 && selectedIndex < patients.length) {
+    if (selectedIndex >= 0 && selectedIndex < visiblePatients.length) {
       return selectedIndex;
     }
-    return simulatorIndex < patients.length ? simulatorIndex : 0;
+    return simulatorIndex < visiblePatients.length ? simulatorIndex : 0;
   }
 
   void selectSimulatorPatient(int simulatorIndex, int patientIndex) {
@@ -1145,6 +2822,8 @@ class _DashboardPageState extends State<DashboardPage> {
           name: patientData['name'],
           age: patientData['age'],
           room: patientData['room'],
+          hospitalId:
+              patientData['hospital_id']?.toString() ?? defaultHospitalId(),
           healthNumber:
               patientData['health_number']?.toString() ?? 'Não indicado',
           careStatus: patientData['care_status']?.toString() ?? 'Em observação',
@@ -1191,7 +2870,14 @@ class _DashboardPageState extends State<DashboardPage> {
 
   @override
   Widget build(BuildContext context) {
-    final criticalCount = patients
+    if (!hasPermission(AppPermission.viewPatients)) {
+      return const AccessDeniedPage(
+        reason: 'Este cargo só tem acesso limitado aos dados.',
+      );
+    }
+
+    final visiblePatients = visiblePatientsForCurrentUser();
+    final criticalCount = visiblePatients
         .where(
           (patient) =>
               patient.status == 'Crítico' || patient.status == 'Critico',
@@ -1204,26 +2890,28 @@ class _DashboardPageState extends State<DashboardPage> {
       return (
         simulatorIndex: simulatorIndex,
         patientIndex: patientIndex,
-        patient: patients[patientIndex],
+        patient: visiblePatients[patientIndex],
       );
     });
 
     return Scaffold(
-      appBar: AppBar(title: const Text('SAUH - Dashboard')),
-      drawer: const SAUHDrawer(currentPage: 'Painel'),
+      appBar: AppBar(title: const Text('SAUH - Simuladores')),
+      drawer: const SAUHDrawer(currentPage: 'Simuladores'),
 
-      floatingActionButton: FloatingActionButton.extended(
-        icon: const Icon(Icons.add),
-        label: const Text('Adicionar Paciente'),
-        onPressed: () async {
-          await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const AddPatientPage()),
-          );
+      floatingActionButton: hasPermission(AppPermission.createPatient)
+          ? FloatingActionButton.extended(
+              icon: const Icon(Icons.add),
+              label: const Text('Adicionar Paciente'),
+              onPressed: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AddPatientPage()),
+                );
 
-          setState(() {});
-        },
-      ),
+                setState(() {});
+              },
+            )
+          : null,
 
       body: Container(
         color: const Color(0xFFF3F7FB),
@@ -1251,7 +2939,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         width: cardWidth,
                         child: InfoCard(
                           title: 'Pacientes',
-                          value: '${patients.length}',
+                          value: '${visiblePatients.length}',
                           icon: Icons.people,
                           color: Colors.blue,
                         ),
@@ -1337,13 +3025,13 @@ class _DashboardPageState extends State<DashboardPage> {
                                   items: [
                                     for (
                                       var patientIndex = 0;
-                                      patientIndex < patients.length;
+                                      patientIndex < visiblePatients.length;
                                       patientIndex++
                                     )
                                       DropdownMenuItem(
                                         value: patientIndex,
                                         child: Text(
-                                          '${patients[patientIndex].name} - ${patients[patientIndex].room}',
+                                          '${visiblePatients[patientIndex].name} - ${visiblePatients[patientIndex].room}',
                                         ),
                                       ),
                                   ],
@@ -1519,7 +3207,7 @@ class _PatientsPageState extends State<PatientsPage> {
   @override
   Widget build(BuildContext context) {
     final filteredPatients = filterPatients(
-      source: patients,
+      source: visiblePatientsForCurrentUser(),
       query: searchText,
       onlyCritical: onlyCritical,
       onlyWaiting: onlyWaiting,
@@ -1530,17 +3218,19 @@ class _PatientsPageState extends State<PatientsPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('Pacientes')),
       drawer: const SAUHDrawer(currentPage: 'Pacientes'),
-      floatingActionButton: FloatingActionButton.extended(
-        icon: const Icon(Icons.add),
-        label: const Text('Adicionar Paciente'),
-        onPressed: () async {
-          await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const AddPatientPage()),
-          );
-          if (mounted) setState(() {});
-        },
-      ),
+      floatingActionButton: hasPermission(AppPermission.createPatient)
+          ? FloatingActionButton.extended(
+              icon: const Icon(Icons.add),
+              label: const Text('Adicionar Paciente'),
+              onPressed: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AddPatientPage()),
+                );
+                if (mounted) setState(() {});
+              },
+            )
+          : null,
       body: Container(
         color: const Color(0xFFF3F7FB),
         padding: const EdgeInsets.all(16),
@@ -1663,7 +3353,10 @@ class AlertsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final alerts = generateAlerts();
-    final registeredAlerts = clinicalAlertRecords;
+    final visiblePatients = visiblePatientsForCurrentUser();
+    final registeredAlerts = clinicalAlertRecords
+        .where((record) => visiblePatients.contains(record.patient))
+        .toList();
 
     return Scaffold(
       appBar: AppBar(title: const Text('Alertas')),
@@ -2120,6 +3813,13 @@ class _AddPatientPageState extends State<AddPatientPage> {
   String selectedCareStatus = 'Em observação';
 
   Future<void> addPatient() async {
+    if (!hasPermission(AppPermission.createPatient)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sem permissão para criar pacientes.')),
+      );
+      return;
+    }
+
     if (nameController.text.isEmpty ||
         healthNumberController.text.isEmpty ||
         ageController.text.isEmpty ||
@@ -2172,6 +3872,7 @@ class _AddPatientPageState extends State<AddPatientPage> {
         name: nameController.text,
         age: age,
         room: roomController.text,
+        hospitalId: defaultHospitalId(),
         healthNumber: healthNumberController.text,
         careStatus: selectedCareStatus,
         status: status,
@@ -2211,6 +3912,12 @@ class _AddPatientPageState extends State<AddPatientPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (!hasPermission(AppPermission.createPatient)) {
+      return const AccessDeniedPage(
+        reason: 'Este cargo não pode criar fichas de paciente.',
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(title: const Text('Adicionar Paciente')),
       drawer: const SAUHDrawer(currentPage: 'Adicionar Paciente'),
@@ -2383,6 +4090,16 @@ class _PatientDetailsPageState extends State<PatientDetailsPage> {
   @override
   Widget build(BuildContext context) {
     final patient = widget.patient;
+    if (!PermissionService.canAccessHospital(
+          currentAppUser,
+          patient.hospitalId,
+        ) ||
+        (!hasPermission(AppPermission.viewPatients) &&
+            !hasPermission(AppPermission.viewLimitedData))) {
+      return const AccessDeniedPage(
+        reason: 'Este paciente não pertence ao teu hospital ou cargo.',
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(title: Text(patient.name)),
@@ -2487,42 +4204,44 @@ class _PatientDetailsPageState extends State<PatientDetailsPage> {
 
             const SizedBox(height: 12),
 
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.monitor_heart),
-                label: const Text('Atualizar Sinais Vitais'),
-                onPressed: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => UpdateVitalsPage(patient: patient),
-                    ),
-                  );
+            if (canUsePatient(patient, AppPermission.updateVitals))
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.monitor_heart),
+                  label: const Text('Atualizar Sinais Vitais'),
+                  onPressed: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => UpdateVitalsPage(patient: patient),
+                      ),
+                    );
 
-                  setState(() {});
-                },
+                    setState(() {});
+                  },
+                ),
               ),
-            ),
 
             const SizedBox(height: 8),
 
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                icon: const Icon(Icons.edit_note),
-                label: const Text('Editar Ficha Clínica'),
-                onPressed: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => EditPatientRecordPage(patient: patient),
-                    ),
-                  );
-                  setState(() {});
-                },
+            if (canUsePatient(patient, AppPermission.editPatientRecord))
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.edit_note),
+                  label: const Text('Editar Ficha Clínica'),
+                  onPressed: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => EditPatientRecordPage(patient: patient),
+                      ),
+                    );
+                    setState(() {});
+                  },
+                ),
               ),
-            ),
 
             const SizedBox(height: 8),
 
@@ -2557,20 +4276,21 @@ class _PatientDetailsPageState extends State<PatientDetailsPage> {
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                 ),
                 const Spacer(),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.add),
-                  label: const Text('Adicionar'),
-                  onPressed: () async {
-                    await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => AddMedicationPage(patient: patient),
-                      ),
-                    );
+                if (canUsePatient(patient, AppPermission.manageMedication))
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.add),
+                    label: const Text('Adicionar'),
+                    onPressed: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => AddMedicationPage(patient: patient),
+                        ),
+                      );
 
-                    setState(() {});
-                  },
-                ),
+                      setState(() {});
+                    },
+                  ),
               ],
             ),
 
@@ -2667,7 +4387,11 @@ class _PatientDetailsPageState extends State<PatientDetailsPage> {
                               ],
                             ),
                           ),
-                          if (!medication.administered)
+                          if (!medication.administered &&
+                              canUsePatient(
+                                patient,
+                                AppPermission.manageMedication,
+                              ))
                             ElevatedButton(
                               onPressed: () {
                                 final professional = currentProfessionalName();
@@ -2873,6 +4597,12 @@ class _EditPatientRecordPageState extends State<EditPatientRecordPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (!canUsePatient(widget.patient, AppPermission.editPatientRecord)) {
+      return const AccessDeniedPage(
+        reason: 'Este cargo não pode editar fichas clínicas.',
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(title: const Text('Editar Ficha Clínica')),
       body: Center(
@@ -3048,6 +4778,12 @@ class _UpdateVitalsPageState extends State<UpdateVitalsPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (!canUsePatient(widget.patient, AppPermission.updateVitals)) {
+      return const AccessDeniedPage(
+        reason: 'Este cargo não pode atualizar sinais vitais.',
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(title: const Text('Atualizar Sinais Vitais')),
       body: Padding(
@@ -3179,6 +4915,12 @@ class _AddMedicationPageState extends State<AddMedicationPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (!canUsePatient(widget.patient, AppPermission.manageMedication)) {
+      return const AccessDeniedPage(
+        reason: 'Este cargo não pode gerir medicação.',
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(title: const Text('Adicionar Medicação')),
       body: Padding(

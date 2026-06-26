@@ -13,15 +13,12 @@ bool get hasSupabaseCredentials =>
 
 Future<void> configureSupabasePersistence() async {
   if (!hasSupabaseCredentials) {
-    debugPrint('Supabase nao configurado. A usar persistencia local demo.');
+    debugPrint('Supabase não configurado. A usar persistência local.');
     return;
   }
 
   try {
-    await Supabase.initialize(
-      url: supabaseUrl,
-      anonKey: supabaseAnonKey,
-    );
+    await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
     vitalSignsPersistence = SupabaseVitalSignsPersistence(
       Supabase.instance.client,
     );

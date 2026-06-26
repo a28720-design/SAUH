@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sauh/main.dart';
+import 'package:sauh/services/auth_service.dart';
 import 'package:sauh/vital_signs_simulator.dart';
 import 'package:sauh/vital_signs_simulator_section.dart';
 
@@ -307,6 +308,10 @@ void main() {
   });
 
   testWidgets('menu lateral apresenta as páginas principais', (tester) async {
+    final login = authService.signIn('admin@hospitalcentral.pt', 'admin123');
+    syncAccountProfileFromUser(login.user!);
+    addTearDown(authService.signOut);
+
     final scaffoldKey = GlobalKey<ScaffoldState>();
 
     await tester.pumpWidget(
@@ -334,6 +339,10 @@ void main() {
   testWidgets('ficha do paciente apresenta informação clínica completa', (
     tester,
   ) async {
+    final login = authService.signIn('admin@hospitalcentral.pt', 'admin123');
+    syncAccountProfileFromUser(login.user!);
+    addTearDown(authService.signOut);
+
     await tester.binding.setSurfaceSize(const Size(1200, 3000));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
