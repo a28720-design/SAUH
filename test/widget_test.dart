@@ -17,7 +17,15 @@ void main() {
 
     await tester.pumpWidget(const SAUHApp());
 
-    expect(find.text('SAUH'), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Image &&
+            widget.image is AssetImage &&
+            (widget.image as AssetImage).assetName == sauhLogoAsset,
+      ),
+      findsOneWidget,
+    );
     expect(find.text('Entrar'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

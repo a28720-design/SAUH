@@ -1,7 +1,10 @@
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../models/app_role.dart';
 import '../models/app_user.dart';
 import 'hospital_service.dart';
 import 'permission_service.dart';
+import 'supabase_account_service.dart';
 
 class AuthResult {
   final AppUser? user;
@@ -81,8 +84,10 @@ class AuthService {
   };
 
   AppUser? currentUser;
+  bool _usingSupabaseAccounts = false;
 
   List<AppUser> get users => List.unmodifiable(_users);
+  bool get usingSupabaseAccounts => _usingSupabaseAccounts;
 
   AuthResult signIn(String email, String password) {
     final normalizedEmail = email.trim().toLowerCase();
@@ -97,22 +102,109 @@ class AuthService {
     if (user == null || _passwords[normalizedEmail] != password) {
       return const AuthResult.failure('Email ou palavra-passe inválidos.');
     }
-    if (!user.active) {
-      return const AuthResult.failure(
-        'Conta inativa. Contacte o administrador.',
-      );
-    }
-    final hospital = hospitalService.byId(user.hospitalId);
-    if (user.requiresHospital && (hospital == null || !hospital.active)) {
-      return const AuthResult.failure('Hospital inativo ou não encontrado.');
-    }
+    final validationError = _validateActiveUser(user);
+    if (validationError != null) return AuthResult.failure(validationError);
 
     currentUser = user;
     return AuthResult.success(user);
   }
 
+  Future<AuthResult> signInWithSupabaseOrLocal(
+    SupabaseClient client,
+    String email,
+    String password,
+  ) async {
+    final normalizedEmail = email.trim().toLowerCase();
+
+    try {
+      await client.auth.signInWithPassword(
+        email: normalizedEmail,
+        password: password,
+      );
+    } on AuthException catch (error) {
+      final fallback = signIn(email, password);
+      if (fallback.isSuccess) return fallback;
+      return AuthResult.failure('Erro no Supabase: ${error.message}');
+    } catch (_) {
+      return signIn(email, password);
+    }
+
+    try {
+      final profile = await supabaseAccountService.currentProfile(client);
+      if (profile == null) {
+        await client.auth.signOut(scope: SignOutScope.local);
+        return const AuthResult.failure(
+          'Conta autenticada, mas sem perfil profissional no Supabase.',
+        );
+      }
+
+      final validationError = _validateActiveUser(profile);
+      if (validationError != null) {
+        await client.auth.signOut(scope: SignOutScope.local);
+        return AuthResult.failure(validationError);
+      }
+
+      _usingSupabaseAccounts = true;
+      upsertUser(profile);
+      currentUser = profile;
+      return AuthResult.success(profile);
+    } catch (error) {
+      await client.auth.signOut(scope: SignOutScope.local);
+      return AuthResult.failure(
+        'Login validado, mas não foi possível carregar o perfil profissional: $error',
+      );
+    }
+  }
+
   void signOut() {
     currentUser = null;
+  }
+
+  void upsertUser(AppUser user) {
+    final index = _users.indexWhere((item) => item.userId == user.userId);
+    if (index == -1) {
+      _users.add(user);
+    } else {
+      _users[index] = user;
+    }
+    if (currentUser?.userId == user.userId) {
+      currentUser = user;
+    }
+  }
+
+  void setSupabaseAccountSnapshot(List<AppUser> remoteUsers, AppUser actor) {
+    if (remoteUsers.isEmpty) return;
+    _usingSupabaseAccounts = true;
+
+    if (actor.role == AppRole.superAdmin) {
+      _users
+        ..clear()
+        ..addAll(remoteUsers);
+    } else {
+      _users.removeWhere((user) => user.hospitalId == actor.hospitalId);
+      _users.addAll(remoteUsers);
+    }
+
+    final signedUser = currentUser;
+    if (signedUser == null) return;
+    for (final user in _users) {
+      if (user.userId == signedUser.userId) {
+        currentUser = user;
+        return;
+      }
+    }
+    _users.add(signedUser);
+  }
+
+  String? _validateActiveUser(AppUser user) {
+    if (!user.active) {
+      return 'Conta inativa. Contacte o administrador.';
+    }
+    final hospital = hospitalService.byId(user.hospitalId);
+    if (user.requiresHospital && (hospital == null || !hospital.active)) {
+      return 'Hospital inativo ou não encontrado.';
+    }
+    return null;
   }
 
   List<AppUser> usersVisibleTo(AppUser? actor) {

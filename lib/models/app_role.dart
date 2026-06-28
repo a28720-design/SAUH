@@ -16,10 +16,30 @@ enum AppRole {
   const AppRole(this.id, this.label);
 
   static AppRole? fromId(String value) {
+    final normalizedValue = value.trim();
     for (final role in AppRole.values) {
-      if (role.id == value) return role;
+      if (role.id == normalizedValue) return role;
     }
     return null;
+  }
+
+  static AppRole? fromSupabaseCargo(String value) {
+    final normalizedValue = value.trim().toLowerCase();
+    return switch (normalizedValue) {
+      'super_admin' || 'superadmin' || 'administrador' => AppRole.superAdmin,
+      'admin' || 'admin_hospital' => AppRole.adminHospital,
+      'diretor_clinico' => AppRole.diretorClinico,
+      'chefe_enfermagem' => AppRole.chefeEnfermagem,
+      'medico' || 'médico' => AppRole.medico,
+      'enfermeiro' => AppRole.enfermeiro,
+      'triagem' => AppRole.triagem,
+      'tecnico' ||
+      'técnico' ||
+      'tecnico_emergencia' => AppRole.tecnicoEmergencia,
+      'rececionista' || 'administrativo' => AppRole.administrativo,
+      'auxiliar' => AppRole.auxiliar,
+      _ => fromId(normalizedValue),
+    };
   }
 }
 

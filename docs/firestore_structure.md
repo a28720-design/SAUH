@@ -35,7 +35,7 @@ O projeto atual continua a compilar sem dependências Firebase porque a app já 
 - `hospitalId`
 - `estado`
 - `prioridade`
-- `sala`
+- `cama`
 - `criadoPor`
 - `dataEntrada`
 

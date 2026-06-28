@@ -42,7 +42,7 @@ VitalSigns createVitals({
 }
 
 void main() {
-  test('mapa da urgência apresenta cinco salas operacionais', () {
+  test('mapa da urgência apresenta cinco camas operacionais', () {
     final rooms = buildEmergencyRooms([
       Patient(
         name: 'Estável',
@@ -71,7 +71,7 @@ void main() {
     ]);
 
     expect(rooms, hasLength(5));
-    expect(rooms.map((room) => room.name), containsAll(['Sala 1', 'Sala 5']));
+    expect(rooms.map((room) => room.name), containsAll(['Cama 1', 'Cama 5']));
     expect(rooms[2].status, 'Paciente crítico');
     expect(rooms[3].status, 'Livre');
   });
@@ -81,7 +81,7 @@ void main() {
       name: 'Maria Crítica',
       healthNumber: '123 456 789',
       age: 70,
-      room: 'Sala 3',
+      room: 'Cama 3',
       careStatus: 'Crítico',
       status: 'Crítico',
       heartRate: 145,
@@ -94,7 +94,7 @@ void main() {
       name: 'João Espera',
       healthNumber: '987 654 321',
       age: 40,
-      room: 'Sala 5',
+      room: 'Cama 5',
       careStatus: 'A aguardar médico',
       status: 'Normal',
       heartRate: 75,

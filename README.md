@@ -47,13 +47,18 @@ flutter analyze
 flutter test
 ```
 
-## Login e permissões
+## Login, permissões e contas persistentes
 
-A app tem uma camada local de autenticação e permissões preparada para ser ligada ao Firebase/Firestore. Como o projeto já estava configurado com Supabase, a implementação mantém o projeto compilável sem adicionar dependências Firebase ainda.
+A app usa Supabase Auth para login real e a tabela `public.app_users` para guardar o perfil profissional, cargo, hospital, departamento e estado ativo/inativo. Assim, as contas criadas continuam disponíveis depois de reiniciar o projeto.
 
-Depois de entrar com uma conta administrativa, usa **Gestão de Contas** para criar, pesquisar, editar, ativar e desativar contas profissionais.
+Para ativar a persistência de contas:
 
-Documentação Firestore:
+1. Executa `supabase_accounts.sql` no SQL Editor do Supabase.
+2. Executa `supabase_patients.sql` para criar a tabela de pacientes e as policies RLS.
+3. Publica a função Edge: `supabase functions deploy manage-account`.
+4. Garante que a função tem a secret `SUPABASE_SERVICE_ROLE_KEY` configurada no projeto Supabase.
+5. Cria o primeiro utilizador em **Authentication > Users**.
+6. Usa o bloco de bootstrap no fim de `supabase_accounts.sql` para associar esse utilizador ao cargo `super_admin`.
+7. Entra na app com essa conta e usa **Gestão de Contas** para criar, pesquisar, editar, ativar e desativar contas profissionais.
 
-- `docs/firestore_structure.md`
-- `docs/firestore.rules`
+A service role key nunca deve ficar no Flutter. A app chama apenas a função `manage-account`, e a função faz as operações administrativas no Supabase.

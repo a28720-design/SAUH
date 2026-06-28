@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -9,6 +9,7 @@ import 'models/hospital.dart';
 import 'services/auth_service.dart';
 import 'services/hospital_service.dart';
 import 'services/permission_service.dart';
+import 'services/supabase_account_service.dart';
 import 'vital_signs_simulator.dart';
 import 'vital_signs_simulator_section.dart';
 
@@ -25,6 +26,7 @@ void main() async {
 }
 
 final supabase = Supabase.instance.client;
+const sauhLogoAsset = 'assets/images/sauh_logo.png';
 
 Future<void> clearExpiredSupabaseSession() async {
   final session = supabase.auth.currentSession;
@@ -84,12 +86,13 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
-  void login() {
+  Future<void> login() async {
     setState(() {
       isLoading = true;
     });
 
-    final result = authService.signIn(
+    final result = await authService.signInWithSupabaseOrLocal(
+      supabase,
       emailController.text,
       passwordController.text,
     );
@@ -150,21 +153,10 @@ class _LoginPageState extends State<LoginPage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(
-                          Icons.local_hospital,
-                          size: 60,
-                          color: Colors.blue,
-                        ),
-                        const SizedBox(height: 10),
-                        const Text(
-                          'SAUH',
-                          style: TextStyle(
-                            fontSize: 30,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const Text(
-                          'Sistema de Apoio em Urgências Hospitalares',
+                        Image.asset(
+                          sauhLogoAsset,
+                          width: 280,
+                          fit: BoxFit.contain,
                         ),
                         const SizedBox(height: 25),
 
@@ -254,16 +246,28 @@ bool hasPermission(AppPermission permission) {
   return PermissionService.can(currentAppUser, permission);
 }
 
+String? currentSupabaseAuthUserId() {
+  try {
+    return Supabase.instance.client.auth.currentUser?.id;
+  } catch (_) {
+    return null;
+  }
+}
+
 enum MedicationStatus { pending, administered, overdue }
 
 class Medication {
-  final String name;
-  final String time;
-  final String dose;
+  String? id;
+  String? patientId;
+  String name;
+  String time;
+  String dose;
   String responsibleProfessional;
   MedicationStatus status;
 
   Medication({
+    this.id,
+    this.patientId,
     required this.name,
     required this.time,
     this.dose = 'Não indicada',
@@ -338,6 +342,9 @@ class Patient {
   String medicalHistory;
   String triageLevel;
   String medicalNotes;
+  String? medicoResponsavelAuthUserId;
+  String? createdByAuthUserId;
+  bool active;
   final List<Medication> medications;
   final List<ClinicalRecord> history;
 
@@ -366,6 +373,9 @@ class Patient {
     this.medicalHistory = 'Sem antecedentes registados',
     this.triageLevel = 'Amarelo',
     this.medicalNotes = 'Sem observações registadas',
+    this.medicoResponsavelAuthUserId,
+    this.createdByAuthUserId,
+    this.active = true,
     required this.medications,
     required this.history,
   }) : symptoms = symptoms ?? [],
@@ -399,10 +409,8 @@ class PatientVitalSignsPersistence implements VitalSignsPersistence {
       await client
           .from('patients')
           .update({
-            'heart_rate': vitals.heartRate,
-            'oxygen': vitals.oxygen,
-            'temperature': vitals.temperature,
-            'status': vitals.patientStatus,
+            'estado_clinico': vitals.patientStatus,
+            'updated_at': DateTime.now().toIso8601String(),
           })
           .eq('id', patient.id!);
     });
@@ -486,137 +494,339 @@ String currentProfessionalName() {
   return 'Profissional SAUH';
 }
 
-final patients = [
-  Patient(
-    name: 'João Silva',
-    age: 67,
-    room: 'U12',
-    healthNumber: '245 781 963',
-    careStatus: 'Crítico',
-    status: 'Crítico',
-    heartRate: 145,
-    temperature: 39.0,
-    oxygen: 88,
-    gender: 'Masculino',
-    contact: '912 345 678',
-    admissionReason: 'Dor torácica e dificuldade respiratória',
-    symptoms: ['Dor torácica', 'Dispneia', 'Sudorese'],
-    allergies: ['Penicilina'],
-    usualMedication: 'Atorvastatina 20 mg; Enalapril 10 mg',
-    medicalHistory: 'Hipertensão arterial e dislipidemia',
-    triageLevel: 'Vermelho',
-    medicalNotes: 'Manter monitorização cardíaca contínua.',
-    medications: [
-      Medication(
-        name: 'Paracetamol',
-        dose: '1 g',
-        time: '08:00',
-        responsibleProfessional: 'Enf. Marta Silva',
-        administered: false,
-      ),
-      Medication(
-        name: 'Aspirina',
-        dose: '100 mg',
-        time: '12:00',
-        responsibleProfessional: 'Dr. Rui Costa',
-        administered: true,
-      ),
-    ],
-    history: [
-      ClinicalRecord(
-        description: 'Paciente registado no sistema.',
-        dateTime: 'Registo inicial',
-      ),
-    ],
-  ),
-  Patient(
-    name: 'Ana Costa',
-    age: 45,
-    room: 'U08',
-    healthNumber: '178 452 690',
-    careStatus: 'Estável',
-    status: 'Normal',
-    heartRate: 78,
-    temperature: 36.7,
-    oxygen: 98,
-    gender: 'Feminino',
-    contact: '934 567 890',
-    admissionReason: 'Dor abdominal persistente',
-    symptoms: ['Dor abdominal', 'Náuseas'],
-    allergies: [],
-    usualMedication: 'Ibuprofeno em SOS',
-    medicalHistory: 'Sem antecedentes relevantes',
-    triageLevel: 'Verde',
-    medicalNotes: 'Aguardar resultados analíticos.',
-    medications: [
-      Medication(
-        name: 'Ibuprofeno',
-        dose: '400 mg',
-        time: '10:00',
-        responsibleProfessional: 'Enf. Joana Reis',
-        administered: true,
-      ),
-    ],
-    history: [
-      ClinicalRecord(
-        description: 'Paciente registado no sistema.',
-        dateTime: 'Registo inicial',
-      ),
-    ],
-  ),
-  Patient(
-    name: 'Carlos Mendes',
-    age: 59,
-    room: 'U15',
-    healthNumber: '396 825 147',
-    careStatus: 'Em observação',
-    status: 'Atenção',
-    heartRate: 122,
-    temperature: 37.9,
-    oxygen: 93,
-    gender: 'Masculino',
-    contact: '961 234 567',
-    admissionReason: 'Descompensação diabética',
-    symptoms: ['Tonturas', 'Poliúria', 'Fraqueza'],
-    allergies: ['Contraste iodado'],
-    usualMedication: 'Insulina basal e Metformina',
-    medicalHistory: 'Diabetes mellitus tipo 2',
-    triageLevel: 'Laranja',
-    medicalNotes: 'Controlar glicemia e hidratação.',
-    medications: [
-      Medication(
-        name: 'Insulina',
-        dose: '8 UI',
-        time: '09:00',
-        responsibleProfessional: 'Enf. Luís Sousa',
-        administered: false,
-      ),
-    ],
-    history: [
-      ClinicalRecord(
-        description: 'Paciente registado no sistema.',
-        dateTime: 'Registo inicial',
-      ),
-    ],
-  ),
-];
+final patients = <Patient>[];
 
 List<Patient> visiblePatientsForCurrentUser() {
   final user = currentAppUser;
   if (user == null) return const [];
-  if (user.role == AppRole.superAdmin) return patients;
+  final authUserId = currentSupabaseAuthUserId();
+  if (user.role == AppRole.superAdmin || user.role == AppRole.adminHospital) {
+    return patients;
+  }
   if (!hasPermission(AppPermission.viewPatients) &&
       !hasPermission(AppPermission.viewLimitedData)) {
     return const [];
   }
-  return patients
+  final hospitalPatients = patients
       .where((patient) => patient.hospitalId == user.hospitalId)
       .toList();
+  if (user.role == AppRole.medico && authUserId != null) {
+    return hospitalPatients
+        .where((patient) => patient.medicoResponsavelAuthUserId == authUserId)
+        .toList();
+  }
+  return hospitalPatients;
 }
 
 bool canUsePatient(Patient patient, AppPermission permission) {
+  final user = currentAppUser;
+  final authUserId = currentSupabaseAuthUserId();
+  if ((user?.role == AppRole.superAdmin ||
+          user?.role == AppRole.adminHospital) &&
+      PermissionService.can(user, permission)) {
+    return true;
+  }
+  if (user?.role == AppRole.medico &&
+      authUserId != null &&
+      patient.medicoResponsavelAuthUserId != authUserId) {
+    return false;
+  }
   return hasPermission(permission) &&
-      PermissionService.canAccessHospital(currentAppUser, patient.hospitalId);
+      PermissionService.canAccessHospital(user, patient.hospitalId);
+}
+
+bool canDeletePatient(Patient patient) {
+  return canUsePatient(patient, AppPermission.deletePatient);
+}
+
+bool canDeleteMedication(Patient patient) {
+  return canUsePatient(patient, AppPermission.deleteMedication);
+}
+
+String _stringFromMap(
+  Map<String, dynamic> row,
+  List<String> keys, {
+  String fallback = '',
+}) {
+  for (final key in keys) {
+    final value = row[key];
+    if (value == null) continue;
+    final text = value.toString().trim();
+    if (text.isNotEmpty) return text;
+  }
+  return fallback;
+}
+
+String? _nullableStringFromMap(Map<String, dynamic> row, List<String> keys) {
+  final value = _stringFromMap(row, keys);
+  return value.isEmpty ? null : value;
+}
+
+int _intFromMap(
+  Map<String, dynamic> row,
+  List<String> keys, {
+  required int fallback,
+}) {
+  final value = _stringFromMap(row, keys);
+  return int.tryParse(value) ?? fallback;
+}
+
+double _doubleFromMap(
+  Map<String, dynamic> row,
+  List<String> keys, {
+  required double fallback,
+}) {
+  final value = _stringFromMap(row, keys).replaceAll(',', '.');
+  return double.tryParse(value) ?? fallback;
+}
+
+bool _boolFromMap(
+  Map<String, dynamic> row,
+  List<String> keys, {
+  required bool fallback,
+}) {
+  for (final key in keys) {
+    final value = row[key];
+    if (value is bool) return value;
+    if (value is String) return value.toLowerCase() == 'true';
+  }
+  return fallback;
+}
+
+Patient patientFromSupabaseMap(
+  Map<String, dynamic> row, {
+  List<Medication> medications = const [],
+  List<ClinicalRecord> history = const [],
+}) {
+  final hospitalValue = _nullableStringFromMap(row, [
+    'hospital',
+    'hospital_id',
+  ]);
+  final hospitalId =
+      hospitalService.normalizeHospitalId(hospitalValue) ??
+      hospitalValue ??
+      defaultHospitalId();
+  final status = _stringFromMap(row, [
+    'estado_clinico',
+    'status',
+  ], fallback: 'Normal');
+
+  return Patient(
+    id: _nullableStringFromMap(row, ['id']),
+    name: _stringFromMap(row, ['nome', 'name'], fallback: 'Sem nome'),
+    age: _intFromMap(row, ['idade', 'age'], fallback: 0),
+    room: _stringFromMap(row, [
+      'cama',
+      'sala',
+      'room',
+      'departamento',
+    ], fallback: 'Cama por atribuir'),
+    hospitalId: hospitalId,
+    healthNumber: _stringFromMap(row, [
+      'numero_processo',
+      'health_number',
+    ], fallback: 'Não indicado'),
+    careStatus: _stringFromMap(row, [
+      'estado_assistencial',
+      'care_status',
+      'prioridade',
+    ], fallback: 'Em observação'),
+    status: status,
+    heartRate: _intFromMap(row, ['heart_rate'], fallback: 78),
+    temperature: _doubleFromMap(row, ['temperature'], fallback: 36.7),
+    oxygen: _intFromMap(row, ['oxygen'], fallback: 98),
+    gender: _stringFromMap(row, ['genero'], fallback: 'Não indicado'),
+    admissionReason: _stringFromMap(row, [
+      'motivo_entrada',
+    ], fallback: 'Avaliação clínica'),
+    triageLevel: _stringFromMap(row, ['prioridade'], fallback: 'Amarelo'),
+    medicoResponsavelAuthUserId: _nullableStringFromMap(row, [
+      'medico_responsavel_auth_user_id',
+    ]),
+    createdByAuthUserId: _nullableStringFromMap(row, [
+      'created_by_auth_user_id',
+    ]),
+    active: _boolFromMap(row, ['ativo'], fallback: true),
+    medications: medications,
+    history: history,
+  );
+}
+
+Medication medicationFromSupabaseMap(Map<String, dynamic> row) {
+  return Medication(
+    id: _nullableStringFromMap(row, ['id']),
+    patientId: _nullableStringFromMap(row, ['patient_id']),
+    name: _stringFromMap(row, ['name', 'nome'], fallback: 'Medicação'),
+    time: _stringFromMap(row, ['time', 'hora'], fallback: '00:00'),
+    dose: _stringFromMap(row, ['dose'], fallback: 'Não indicada'),
+    responsibleProfessional: _stringFromMap(row, [
+      'responsible_professional',
+      'profissional_responsavel',
+    ], fallback: 'Por atribuir'),
+    administered: _boolFromMap(row, [
+      'administered',
+      'administrado',
+    ], fallback: false),
+  );
+}
+
+Map<String, dynamic> medicationToSupabaseMap(
+  Medication medication, {
+  required String patientId,
+  bool includeCreator = false,
+}) {
+  final data = <String, dynamic>{
+    'patient_id': patientId,
+    'name': medication.name.trim(),
+    'dose': medication.dose.trim(),
+    'time': medication.time.trim(),
+    'responsible_professional': medication.responsibleProfessional.trim(),
+    'administered': medication.administered,
+  };
+  if (includeCreator) {
+    final authUserId = currentSupabaseAuthUserId();
+    if (authUserId != null && authUserId.isNotEmpty) {
+      data['created_by_auth_user_id'] = authUserId;
+    }
+  }
+  return data;
+}
+
+Future<List<Patient>> fetchPatientsFromSupabase() async {
+  final patientRows = await supabase
+      .from('patients')
+      .select()
+      .eq('ativo', true)
+      .order('created_at', ascending: false);
+
+  final loadedPatients = <Patient>[];
+  for (final row in patientRows) {
+    final patientId = row['id'];
+    final medicationRows = await supabase
+        .from('medications')
+        .select()
+        .eq('patient_id', patientId)
+        .order('created_at', ascending: true);
+    final historyRows = await supabase
+        .from('clinical_history')
+        .select()
+        .eq('patient_id', patientId)
+        .order('created_at', ascending: true);
+
+    loadedPatients.add(
+      patientFromSupabaseMap(
+        row,
+        medications: medicationRows
+            .map<Medication>(medicationFromSupabaseMap)
+            .toList(),
+        history: historyRows.map<ClinicalRecord>((historyData) {
+          return ClinicalRecord(
+            description:
+                historyData['description']?.toString() ?? 'Registo clínico',
+            dateTime: historyData['date_time']?.toString() ?? '',
+          );
+        }).toList(),
+      ),
+    );
+  }
+  return loadedPatients;
+}
+
+Future<void> refreshPatientsCacheFromSupabase() async {
+  final loadedPatients = await fetchPatientsFromSupabase();
+  patients
+    ..clear()
+    ..addAll(loadedPatients);
+}
+
+Future<void> deletePatientFromSupabase(Patient patient) async {
+  if (!canDeletePatient(patient)) {
+    throw StateError('Sem permissão para apagar este paciente.');
+  }
+  if (patient.id == null || patient.id!.isEmpty) {
+    throw StateError('Paciente sem ID Supabase.');
+  }
+
+  await supabase.from('patients').delete().eq('id', patient.id!);
+  patients.removeWhere((item) => item.id == patient.id);
+}
+
+Future<void> updatePatientRecordInSupabase(Patient patient) async {
+  if (patient.id == null || patient.id!.isEmpty) return;
+
+  await supabase
+      .from('patients')
+      .update({
+        'numero_processo': patient.healthNumber,
+        'genero': patient.gender,
+        'motivo_entrada': patient.admissionReason,
+        'estado_clinico': patient.status,
+        'prioridade': patient.careStatus,
+        'departamento': patient.room,
+        'ativo': patient.active,
+      })
+      .eq('id', patient.id!);
+}
+
+Future<Medication> insertMedicationInSupabase(
+  Patient patient,
+  Medication medication,
+) async {
+  if (patient.id == null || patient.id!.isEmpty) {
+    throw StateError('Paciente sem ID Supabase.');
+  }
+
+  final insertedMedication = await supabase
+      .from('medications')
+      .insert(
+        medicationToSupabaseMap(
+          medication,
+          patientId: patient.id!,
+          includeCreator: true,
+        ),
+      )
+      .select()
+      .single();
+
+  return medicationFromSupabaseMap(insertedMedication);
+}
+
+Future<void> updateMedicationInSupabase(
+  Patient patient,
+  Medication medication,
+) async {
+  if (patient.id == null || patient.id!.isEmpty) {
+    throw StateError('Paciente sem ID Supabase.');
+  }
+  if (medication.id == null || medication.id!.isEmpty) return;
+
+  await supabase
+      .from('medications')
+      .update(medicationToSupabaseMap(medication, patientId: patient.id!))
+      .eq('id', medication.id!)
+      .eq('patient_id', patient.id!);
+}
+
+Future<void> deleteMedicationFromSupabase(
+  Patient patient,
+  Medication medication,
+) async {
+  if (!canDeleteMedication(patient)) {
+    throw StateError('Sem permissão para apagar medicação.');
+  }
+  if (patient.id == null || patient.id!.isEmpty) {
+    throw StateError('Paciente sem ID Supabase.');
+  }
+  if (medication.id == null || medication.id!.isEmpty) {
+    throw StateError('Medicação sem ID Supabase.');
+  }
+
+  await supabase
+      .from('medications')
+      .delete()
+      .eq('id', medication.id!)
+      .eq('patient_id', patient.id!);
+  patient.medications.removeWhere((item) => item.id == medication.id);
 }
 
 class PatientAlert {
@@ -889,35 +1099,35 @@ List<EmergencyRoomData> buildEmergencyRooms(Iterable<Patient> source) {
 
   return [
     EmergencyRoomData(
-      name: 'Sala 1',
+      name: 'Cama 1',
       status: 'Paciente estável',
       patient: stable,
       color: Colors.green,
       icon: Icons.check_circle,
     ),
     EmergencyRoomData(
-      name: 'Sala 2',
+      name: 'Cama 2',
       status: 'Paciente em observação',
       patient: observation,
       color: Colors.orange,
       icon: Icons.visibility,
     ),
     EmergencyRoomData(
-      name: 'Sala 3',
+      name: 'Cama 3',
       status: 'Paciente crítico',
       patient: critical,
       color: Colors.red,
       icon: Icons.emergency,
     ),
     const EmergencyRoomData(
-      name: 'Sala 4',
+      name: 'Cama 4',
       status: 'Livre',
       patient: null,
       color: Colors.blue,
       icon: Icons.bed,
     ),
     EmergencyRoomData(
-      name: 'Sala 5',
+      name: 'Cama 5',
       status: 'A aguardar médico',
       patient: waiting,
       color: Colors.amber,
@@ -1015,19 +1225,13 @@ class SAUHDrawer extends StatelessWidget {
         child: SingleChildScrollView(
           child: Column(
             children: [
-              const DrawerHeader(
-                child: Row(
-                  children: [
-                    Icon(Icons.local_hospital, size: 42, color: Colors.blue),
-                    SizedBox(width: 12),
-                    Text(
-                      'SAUH',
-                      style: TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
+              DrawerHeader(
+                child: Center(
+                  child: Image.asset(
+                    sauhLogoAsset,
+                    width: 220,
+                    fit: BoxFit.contain,
+                  ),
                 ),
               ),
               ListTile(
@@ -1442,7 +1646,7 @@ class AdminHospitalDashboard extends StatelessWidget {
     return RoleDashboardShell(
       title: 'Painel Coordenador da Urgência',
       subtitle:
-          'Gestão da urgência: profissionais, pacientes, salas/camas e visão operacional.',
+          'Gestão da urgência: profissionais, pacientes, camas e visão operacional.',
       icon: Icons.local_hospital,
       color: Colors.blue,
       actions: const [
@@ -1727,7 +1931,7 @@ class AdministrativoDashboard extends StatelessWidget {
     return const RoleDashboardShell(
       title: 'Painel Administrativo',
       subtitle:
-          'Registo administrativo, criação inicial de fichas e acompanhamento de salas/listas.',
+          'Registo administrativo, criação inicial de fichas e acompanhamento de camas/listas.',
       icon: Icons.assignment_ind,
       color: Colors.blueGrey,
       actions: [
@@ -1740,7 +1944,7 @@ class AdministrativoDashboard extends StatelessWidget {
         ),
         DashboardActionCard(
           title: 'Pacientes',
-          subtitle: 'Pesquisar pacientes e salas',
+          subtitle: 'Pesquisar pacientes e camas',
           icon: Icons.people,
           color: Colors.blue,
           page: PatientsPage(),
@@ -1761,7 +1965,7 @@ class AuxiliarDashboard extends StatelessWidget {
     return const RoleDashboardShell(
       title: 'Painel Assistente Operacional',
       subtitle:
-          'Acesso de apoio com visualização de pacientes, salas e estado assistencial.',
+          'Acesso de apoio com visualização de pacientes, camas e estado assistencial.',
       icon: Icons.support_agent,
       color: Colors.brown,
       actions: [
@@ -1774,7 +1978,7 @@ class AuxiliarDashboard extends StatelessWidget {
         ),
         DashboardActionCard(
           title: 'Mapa da Urgência',
-          subtitle: 'Ver salas e ocupação',
+          subtitle: 'Ver camas e ocupação',
           icon: Icons.map,
           color: Colors.orange,
           page: EmergencyMapPage(),
@@ -1949,6 +2153,108 @@ class _RegisterHospitalPageState extends State<RegisterHospitalPage> {
   }
 }
 
+class AccountCargoOption {
+  final String cargo;
+  final String label;
+  final AppRole role;
+
+  const AccountCargoOption({
+    required this.cargo,
+    required this.label,
+    required this.role,
+  });
+}
+
+const accountCargoOptions = [
+  AccountCargoOption(
+    cargo: 'admin',
+    label: 'Administrador',
+    role: AppRole.adminHospital,
+  ),
+  AccountCargoOption(cargo: 'medico', label: 'Médico', role: AppRole.medico),
+  AccountCargoOption(
+    cargo: 'enfermeiro',
+    label: 'Enfermeiro',
+    role: AppRole.enfermeiro,
+  ),
+  AccountCargoOption(
+    cargo: 'tecnico',
+    label: 'Técnico',
+    role: AppRole.tecnicoEmergencia,
+  ),
+  AccountCargoOption(
+    cargo: 'rececionista',
+    label: 'Rececionista',
+    role: AppRole.administrativo,
+  ),
+  AccountCargoOption(
+    cargo: 'triagem',
+    label: 'Profissional de Triagem',
+    role: AppRole.triagem,
+  ),
+];
+
+class DoctorOption {
+  final String authUserId;
+  final String name;
+  final String email;
+
+  const DoctorOption({
+    required this.authUserId,
+    required this.name,
+    required this.email,
+  });
+
+  String get label {
+    final visibleName = name.trim().isEmpty ? 'Médico sem nome' : name.trim();
+    final visibleEmail = email.trim();
+    return visibleEmail.isEmpty ? visibleName : '$visibleName • $visibleEmail';
+  }
+}
+
+Future<List<DoctorOption>> fetchActiveDoctorsFromSupabase({
+  String? hospitalId,
+}) async {
+  dynamic query = supabase
+      .from('app_users')
+      .select('auth_user_id, nome, email, cargo, hospital, ativo')
+      .eq('cargo', 'medico')
+      .eq('ativo', true);
+
+  final hospitalFilter = hospitalService.normalizeHospitalId(hospitalId);
+  if (hospitalFilter != null) {
+    query = query.eq('hospital', hospitalFilter);
+  } else {
+    final user = currentAppUser;
+    if (user != null &&
+        user.role != AppRole.superAdmin &&
+        user.role != AppRole.adminHospital) {
+      final hospitalValue = hospitalService.normalizeHospitalId(
+        user.hospitalId,
+      );
+      if (hospitalValue != null) {
+        query = query.eq('hospital', hospitalValue);
+      }
+    }
+  }
+
+  final rows = await query.order('nome');
+  final doctors = <DoctorOption>[];
+  for (final row in rows) {
+    if (row is! Map<String, dynamic>) continue;
+    final authUserId = _stringFromMap(row, ['auth_user_id']);
+    if (authUserId.isEmpty) continue;
+    doctors.add(
+      DoctorOption(
+        authUserId: authUserId,
+        name: _stringFromMap(row, ['nome'], fallback: 'Médico'),
+        email: _stringFromMap(row, ['email']),
+      ),
+    );
+  }
+  return doctors;
+}
+
 class CreateUserPage extends StatefulWidget {
   const CreateUserPage({super.key});
 
@@ -1961,20 +2267,45 @@ class _CreateUserPageState extends State<CreateUserPage> {
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
   final departmentController = TextEditingController();
-  AppRole? selectedRole;
+  String? selectedCargo;
   String? selectedHospitalId;
   bool active = true;
+  bool isSaving = false;
+
+  List<AccountCargoOption> cargoOptionsFor(AppUser? creator) {
+    return accountCargoOptions
+        .where(
+          (option) => PermissionService.canCreateRole(creator, option.role),
+        )
+        .toList();
+  }
+
+  AccountCargoOption? selectedCargoOption(List<AccountCargoOption> options) {
+    for (final option in options) {
+      if (option.cargo == selectedCargo) return option;
+    }
+    return null;
+  }
+
+  List<Hospital> get hospitalOptions => hospitalService.activeUniqueHospitals;
+
+  String? validHospitalValue(String? value) {
+    final normalizedValue = hospitalService.normalizeHospitalId(value);
+    final options = hospitalOptions;
+    if (normalizedValue != null &&
+        options.any((hospital) => hospital.hospitalId == normalizedValue)) {
+      return normalizedValue;
+    }
+    return options.isEmpty ? null : options.first.hospitalId;
+  }
 
   @override
   void initState() {
     super.initState();
     final creator = currentAppUser;
-    final roles = AppRole.values
-        .where((role) => PermissionService.canCreateRole(creator, role))
-        .toList();
-    selectedRole = roles.isEmpty ? null : roles.first;
-    selectedHospitalId =
-        creator?.hospitalId ?? hospitalService.hospitals.first.hospitalId;
+    final options = cargoOptionsFor(creator);
+    selectedCargo = options.isEmpty ? null : options.first.cargo;
+    selectedHospitalId = validHospitalValue(creator?.hospitalId);
   }
 
   @override
@@ -1986,12 +2317,16 @@ class _CreateUserPageState extends State<CreateUserPage> {
     super.dispose();
   }
 
-  void createUser() {
+  Future<void> createUser() async {
     final creator = currentAppUser;
     if (creator == null || !hasPermission(AppPermission.createUsers)) {
       return;
     }
-    if (selectedRole == null ||
+    final cargoOptions = cargoOptionsFor(creator);
+    final cargoOption = selectedCargoOption(cargoOptions);
+    if (cargoOption == null ||
+        selectedCargo == null ||
+        selectedCargo!.trim().isEmpty ||
         nameController.text.trim().isEmpty ||
         emailController.text.trim().isEmpty ||
         passwordController.text.isEmpty) {
@@ -2002,48 +2337,85 @@ class _CreateUserPageState extends State<CreateUserPage> {
       );
       return;
     }
+    if (passwordController.text.length < 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'A password temporária deve ter pelo menos 6 caracteres.',
+          ),
+        ),
+      );
+      return;
+    }
+    final resolvedHospitalId = validHospitalValue(selectedHospitalId);
+    if (cargoOption.role != AppRole.superAdmin && resolvedHospitalId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Seleciona um hospital ativo antes de criar a conta.'),
+        ),
+      );
+      return;
+    }
 
+    setState(() {
+      isSaving = true;
+    });
     try {
-      final user = authService.createUser(
+      final user = await supabaseAccountService.createAccount(
+        client: supabase,
         creator: creator,
         name: nameController.text.trim(),
         email: emailController.text.trim(),
         temporaryPassword: passwordController.text,
-        role: selectedRole!,
+        cargo: selectedCargo!,
+        role: cargoOption.role,
         department: departmentController.text.trim().isEmpty
             ? 'Não definido'
             : departmentController.text.trim(),
         active: active,
-        hospitalId: selectedHospitalId,
+        hospitalId: resolvedHospitalId,
       );
+      authService.upsertUser(user);
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Utilizador criado: ${user.email}')),
+        SnackBar(content: Text('Conta criada no Supabase: ${user.email}')),
       );
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const AccountManagementPage()),
       );
     } catch (error) {
+      if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(error.toString())));
+    } finally {
+      if (mounted) {
+        setState(() {
+          isSaving = false;
+        });
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final creator = currentAppUser;
-    final roles = AppRole.values
-        .where((role) => PermissionService.canCreateRole(creator, role))
-        .toList();
+    final cargoOptions = cargoOptionsFor(creator);
+    final hospitals = hospitalOptions;
+    if (selectedCargoOption(cargoOptions) == null && cargoOptions.isNotEmpty) {
+      selectedCargo = cargoOptions.first.cargo;
+    }
+    selectedHospitalId = validHospitalValue(selectedHospitalId);
 
     if (creator == null ||
         !hasPermission(AppPermission.createUsers) ||
-        roles.isEmpty) {
+        cargoOptions.isEmpty) {
       return const AccessDeniedPage();
     }
 
-    final canChooseHospital = creator.role == AppRole.superAdmin;
+    final canChooseHospital =
+        creator.role == AppRole.superAdmin && hospitals.isNotEmpty;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Criar Conta')),
@@ -2087,35 +2459,42 @@ class _CreateUserPageState extends State<CreateUserPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                DropdownButtonFormField<AppRole>(
-                  initialValue: selectedRole,
+                DropdownButtonFormField<String>(
+                  initialValue: selectedCargo,
                   decoration: const InputDecoration(
                     labelText: 'Cargo',
                     border: OutlineInputBorder(),
                   ),
                   items: [
-                    for (final role in roles)
-                      DropdownMenuItem(value: role, child: Text(role.label)),
+                    for (final option in cargoOptions)
+                      DropdownMenuItem(
+                        value: option.cargo,
+                        child: Text(option.label),
+                      ),
                   ],
-                  onChanged: (value) => setState(() => selectedRole = value),
+                  onChanged: (value) => setState(() => selectedCargo = value),
                 ),
                 const SizedBox(height: 12),
                 if (canChooseHospital)
                   DropdownButtonFormField<String>(
-                    initialValue: selectedHospitalId,
+                    initialValue: validHospitalValue(selectedHospitalId),
                     decoration: const InputDecoration(
                       labelText: 'Hospital',
                       border: OutlineInputBorder(),
                     ),
                     items: [
-                      for (final hospital in hospitalService.hospitals)
+                      for (final hospital in hospitals)
                         DropdownMenuItem(
                           value: hospital.hospitalId,
-                          child: Text(hospital.name),
+                          child: Text(
+                            '${hospital.name} (${hospital.hospitalCode})',
+                          ),
                         ),
                     ],
                     onChanged: (value) {
-                      setState(() => selectedHospitalId = value);
+                      setState(
+                        () => selectedHospitalId = validHospitalValue(value),
+                      );
                     },
                   )
                 else
@@ -2143,8 +2522,8 @@ class _CreateUserPageState extends State<CreateUserPage> {
                 const SizedBox(height: 16),
                 ElevatedButton.icon(
                   icon: const Icon(Icons.person_add_alt_1),
-                  label: const Text('Criar Conta'),
-                  onPressed: createUser,
+                  label: Text(isSaving ? 'A criar...' : 'Criar Conta'),
+                  onPressed: isSaving ? null : createUser,
                 ),
               ],
             ),
@@ -2172,6 +2551,19 @@ class _EditUserPageState extends State<EditUserPage> {
   late AppRole selectedRole;
   late String? selectedHospitalId;
   late bool active;
+  bool isSaving = false;
+
+  List<Hospital> get hospitalOptions => hospitalService.activeUniqueHospitals;
+
+  String? validHospitalValue(String? value) {
+    final normalizedValue = hospitalService.normalizeHospitalId(value);
+    final options = hospitalOptions;
+    if (normalizedValue != null &&
+        options.any((hospital) => hospital.hospitalId == normalizedValue)) {
+      return normalizedValue;
+    }
+    return options.isEmpty ? null : options.first.hospitalId;
+  }
 
   @override
   void initState() {
@@ -2182,7 +2574,7 @@ class _EditUserPageState extends State<EditUserPage> {
     departmentController = TextEditingController(text: user.department);
     passwordController = TextEditingController();
     selectedRole = user.role;
-    selectedHospitalId = user.hospitalId;
+    selectedHospitalId = validHospitalValue(user.hospitalId);
     active = user.active;
   }
 
@@ -2195,36 +2587,60 @@ class _EditUserPageState extends State<EditUserPage> {
     super.dispose();
   }
 
-  void saveUser() {
+  Future<void> saveUser() async {
     final actor = currentAppUser;
     if (actor == null) return;
+    final resolvedHospitalId = selectedRole == AppRole.superAdmin
+        ? null
+        : validHospitalValue(selectedHospitalId);
+    if (selectedRole != AppRole.superAdmin && resolvedHospitalId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Seleciona um hospital ativo antes de guardar.'),
+        ),
+      );
+      return;
+    }
 
+    setState(() {
+      isSaving = true;
+    });
     try {
-      authService.updateUser(
+      final updatedUser = await supabaseAccountService.updateAccount(
+        client: supabase,
         actor: actor,
         target: widget.user,
         name: nameController.text,
         email: emailController.text,
         role: selectedRole,
-        hospitalId: selectedHospitalId,
+        hospitalId: resolvedHospitalId,
         department: departmentController.text,
         active: active,
         newPassword: passwordController.text,
       );
-      if (widget.user.userId == actor.userId) {
-        syncAccountProfileFromUser(widget.user);
+      authService.upsertUser(updatedUser);
+      if (updatedUser.userId == actor.userId) {
+        syncAccountProfileFromUser(updatedUser);
       }
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Conta atualizada: ${widget.user.email}')),
+        SnackBar(content: Text('Conta atualizada: ${updatedUser.email}')),
       );
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const AccountManagementPage()),
       );
     } catch (error) {
+      if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(error.toString())));
+    } finally {
+      if (mounted) {
+        setState(() {
+          isSaving = false;
+        });
+      }
     }
   }
 
@@ -2250,8 +2666,9 @@ class _EditUserPageState extends State<EditUserPage> {
     if (selectedRole == AppRole.superAdmin) {
       selectedHospitalId = null;
     } else {
-      selectedHospitalId ??= hospitalService.hospitals.first.hospitalId;
+      selectedHospitalId = validHospitalValue(selectedHospitalId);
     }
+    final hospitals = hospitalOptions;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Editar Conta')),
@@ -2306,20 +2723,24 @@ class _EditUserPageState extends State<EditUserPage> {
                 if (selectedRole != AppRole.superAdmin)
                   if (canChooseHospital)
                     DropdownButtonFormField<String>(
-                      initialValue: selectedHospitalId,
+                      initialValue: validHospitalValue(selectedHospitalId),
                       decoration: const InputDecoration(
                         labelText: 'Hospital',
                         border: OutlineInputBorder(),
                       ),
                       items: [
-                        for (final hospital in hospitalService.hospitals)
+                        for (final hospital in hospitals)
                           DropdownMenuItem(
                             value: hospital.hospitalId,
-                            child: Text(hospital.name),
+                            child: Text(
+                              '${hospital.name} (${hospital.hospitalCode})',
+                            ),
                           ),
                       ],
                       onChanged: (value) {
-                        setState(() => selectedHospitalId = value);
+                        setState(
+                          () => selectedHospitalId = validHospitalValue(value),
+                        );
                       },
                     )
                   else
@@ -2364,8 +2785,8 @@ class _EditUserPageState extends State<EditUserPage> {
                 const SizedBox(height: 16),
                 ElevatedButton.icon(
                   icon: const Icon(Icons.save),
-                  label: const Text('Guardar Alterações'),
-                  onPressed: saveUser,
+                  label: Text(isSaving ? 'A guardar...' : 'Guardar Alterações'),
+                  onPressed: isSaving ? null : saveUser,
                 ),
               ],
             ),
@@ -2479,11 +2900,86 @@ class AccountManagementPage extends StatefulWidget {
 class _AccountManagementPageState extends State<AccountManagementPage> {
   final searchController = TextEditingController();
   String searchText = '';
+  bool isLoadingAccounts = false;
+  String? accountsError;
+
+  @override
+  void initState() {
+    super.initState();
+    loadAccountsFromSupabase();
+  }
 
   @override
   void dispose() {
     searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> loadAccountsFromSupabase() async {
+    final actor = currentAppUser;
+    if (actor == null || supabase.auth.currentUser == null) {
+      setState(() {
+        accountsError =
+            'Sessão Supabase ausente. As contas locais não ficam permanentes.';
+      });
+      return;
+    }
+
+    setState(() {
+      isLoadingAccounts = true;
+      accountsError = null;
+    });
+    try {
+      final users = await supabaseAccountService.loadVisibleAccounts(
+        supabase,
+        actor,
+      );
+      authService.setSupabaseAccountSnapshot(users, actor);
+    } catch (error) {
+      accountsError = error.toString();
+    } finally {
+      if (mounted) {
+        setState(() {
+          isLoadingAccounts = false;
+        });
+      }
+    }
+  }
+
+  Future<void> setAccountActive(AppUser user, bool value) async {
+    final actor = currentAppUser;
+    if (actor == null) return;
+    if (supabase.auth.currentUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Inicia sessão com uma conta Supabase para guardar esta alteração.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    try {
+      final updatedUser = await supabaseAccountService.updateAccount(
+        client: supabase,
+        actor: actor,
+        target: user,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        department: user.department,
+        active: value,
+        hospitalId: user.hospitalId,
+      );
+      authService.upsertUser(updatedUser);
+      if (mounted) setState(() {});
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
   }
 
   @override
@@ -2560,6 +3056,23 @@ class _AccountManagementPageState extends State<AccountManagementPage> {
               ),
             ),
             const SizedBox(height: 12),
+            if (isLoadingAccounts) const LinearProgressIndicator(),
+            if (accountsError != null)
+              Card(
+                color: Colors.orange.shade50,
+                child: ListTile(
+                  leading: const Icon(Icons.cloud_off, color: Colors.orange),
+                  title: const Text('Sincronização Supabase'),
+                  subtitle: Text(accountsError!),
+                  trailing: TextButton.icon(
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Tentar novamente'),
+                    onPressed: loadAccountsFromSupabase,
+                  ),
+                ),
+              ),
+            if (isLoadingAccounts || accountsError != null)
+              const SizedBox(height: 12),
             TextField(
               controller: searchController,
               decoration: const InputDecoration(
@@ -2617,24 +3130,8 @@ class _AccountManagementPageState extends State<AccountManagementPage> {
                                   value: user.active,
                                   onChanged: user.userId == actor.userId
                                       ? null
-                                      : (value) {
-                                          try {
-                                            authService.setUserActive(
-                                              actor,
-                                              user,
-                                              value,
-                                            );
-                                            setState(() {});
-                                          } catch (error) {
-                                            ScaffoldMessenger.of(
-                                              context,
-                                            ).showSnackBar(
-                                              SnackBar(
-                                                content: Text(error.toString()),
-                                              ),
-                                            );
-                                          }
-                                        },
+                                      : (value) =>
+                                            setAccountActive(user, value),
                                 ),
                               ],
                             ),
@@ -2795,66 +3292,7 @@ class _DashboardPageState extends State<DashboardPage> {
     });
 
     try {
-      final patientRows = await supabase
-          .from('patients')
-          .select()
-          .order('created_at', ascending: true);
-
-      final loadedPatients = <Patient>[];
-
-      for (final patientData in patientRows) {
-        final patientId = patientData['id'];
-
-        final medicationRows = await supabase
-            .from('medications')
-            .select()
-            .eq('patient_id', patientId)
-            .order('created_at', ascending: true);
-
-        final historyRows = await supabase
-            .from('clinical_history')
-            .select()
-            .eq('patient_id', patientId)
-            .order('created_at', ascending: true);
-
-        final patient = Patient(
-          id: patientData['id'],
-          name: patientData['name'],
-          age: patientData['age'],
-          room: patientData['room'],
-          hospitalId:
-              patientData['hospital_id']?.toString() ?? defaultHospitalId(),
-          healthNumber:
-              patientData['health_number']?.toString() ?? 'Não indicado',
-          careStatus: patientData['care_status']?.toString() ?? 'Em observação',
-          status: patientData['status'],
-          heartRate: patientData['heart_rate'],
-          temperature: (patientData['temperature'] as num).toDouble(),
-          oxygen: patientData['oxygen'],
-          medications: medicationRows.map<Medication>((medicationData) {
-            return Medication(
-              name: medicationData['name'],
-              time: medicationData['time'],
-              dose: medicationData['dose']?.toString() ?? 'Não indicada',
-              responsibleProfessional:
-                  medicationData['responsible_professional']?.toString() ??
-                  'Por atribuir',
-              administered: medicationData['administered'],
-            );
-          }).toList(),
-          history: historyRows.map<ClinicalRecord>((historyData) {
-            return ClinicalRecord(
-              description: historyData['description'],
-              dateTime: historyData['date_time'],
-            );
-          }).toList(),
-        );
-
-        loadedPatients.add(patient);
-      }
-
-      patients.clear();
-      patients.addAll(loadedPatients);
+      await refreshPatientsCacheFromSupabase();
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -2903,12 +3341,15 @@ class _DashboardPageState extends State<DashboardPage> {
               icon: const Icon(Icons.add),
               label: const Text('Adicionar Paciente'),
               onPressed: () async {
-                await Navigator.push(
+                final created = await Navigator.push<bool>(
                   context,
                   MaterialPageRoute(builder: (_) => const AddPatientPage()),
                 );
-
-                setState(() {});
+                if (created == true) {
+                  await loadPatientsFromSupabase();
+                } else if (mounted) {
+                  setState(() {});
+                }
               },
             )
           : null,
@@ -3197,11 +3638,76 @@ class _PatientsPageState extends State<PatientsPage> {
   bool onlyWaiting = false;
   bool onlyPendingMedication = false;
   bool onlyActiveAlerts = false;
+  bool isLoadingPatients = false;
+  String? patientsError;
+
+  @override
+  void initState() {
+    super.initState();
+    loadPatients();
+  }
 
   @override
   void dispose() {
     searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> loadPatients() async {
+    setState(() {
+      isLoadingPatients = true;
+      patientsError = null;
+    });
+    try {
+      await refreshPatientsCacheFromSupabase();
+    } catch (error) {
+      patientsError = error.toString();
+    } finally {
+      if (mounted) {
+        setState(() {
+          isLoadingPatients = false;
+        });
+      }
+    }
+  }
+
+  Future<void> confirmDeletePatient(Patient patient) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Apagar paciente'),
+        content: Text(
+          'Tens a certeza que queres apagar ${patient.name}? Esta ação remove também a medicação associada.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton.icon(
+            icon: const Icon(Icons.delete_outline),
+            label: const Text('Apagar'),
+            onPressed: () => Navigator.pop(context, true),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await deletePatientFromSupabase(patient);
+      if (!mounted) return;
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${patient.name} apagado com sucesso.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao apagar paciente: $error')),
+      );
+    }
   }
 
   @override
@@ -3223,11 +3729,15 @@ class _PatientsPageState extends State<PatientsPage> {
               icon: const Icon(Icons.add),
               label: const Text('Adicionar Paciente'),
               onPressed: () async {
-                await Navigator.push(
+                final created = await Navigator.push<bool>(
                   context,
                   MaterialPageRoute(builder: (_) => const AddPatientPage()),
                 );
-                if (mounted) setState(() {});
+                if (created == true) {
+                  await loadPatients();
+                } else if (mounted) {
+                  setState(() {});
+                }
               },
             )
           : null,
@@ -3240,7 +3750,7 @@ class _PatientsPageState extends State<PatientsPage> {
               controller: searchController,
               decoration: const InputDecoration(
                 labelText:
-                    'Pesquisar por nome, número de utente, sala ou estado',
+                    'Pesquisar por nome, número de utente, cama ou estado',
                 prefixIcon: Icon(Icons.search),
                 border: OutlineInputBorder(),
                 filled: true,
@@ -3253,6 +3763,23 @@ class _PatientsPageState extends State<PatientsPage> {
               },
             ),
             const SizedBox(height: 10),
+            if (isLoadingPatients) const LinearProgressIndicator(),
+            if (patientsError != null)
+              Card(
+                color: Colors.orange.shade50,
+                child: ListTile(
+                  leading: const Icon(Icons.cloud_off, color: Colors.orange),
+                  title: const Text('Sincronização de pacientes'),
+                  subtitle: Text(patientsError!),
+                  trailing: TextButton.icon(
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Tentar novamente'),
+                    onPressed: loadPatients,
+                  ),
+                ),
+              ),
+            if (isLoadingPatients || patientsError != null)
+              const SizedBox(height: 10),
             Align(
               alignment: Alignment.centerLeft,
               child: Wrap(
@@ -3316,14 +3843,28 @@ class _PatientsPageState extends State<PatientsPage> {
                             ),
                             title: Text(patient.name),
                             subtitle: Text(
-                              'Utente: ${patient.healthNumber} • Sala: ${patient.room} • ${patient.careStatus}',
+                              'Utente: ${patient.healthNumber} • Cama: ${patient.room} • ${patient.careStatus}',
                             ),
-                            trailing: Text(
-                              patient.status,
-                              style: TextStyle(
-                                color: patientStatusColor(patient.status),
-                                fontWeight: FontWeight.bold,
-                              ),
+                            trailing: Wrap(
+                              spacing: 8,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                Text(
+                                  patient.status,
+                                  style: TextStyle(
+                                    color: patientStatusColor(patient.status),
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                if (canDeletePatient(patient))
+                                  IconButton(
+                                    tooltip: 'Apagar paciente',
+                                    icon: const Icon(Icons.delete_outline),
+                                    color: Colors.red,
+                                    onPressed: () =>
+                                        confirmDeletePatient(patient),
+                                  ),
+                              ],
                             ),
                             onTap: () async {
                               await Navigator.push(
@@ -3811,6 +4352,93 @@ class _AddPatientPageState extends State<AddPatientPage> {
 
   String selectedStatus = 'Normal';
   String selectedCareStatus = 'Em observação';
+  String? selectedHospitalId;
+  List<DoctorOption> doctorOptions = const [];
+  String? selectedDoctorAuthUserId;
+  bool isLoadingDoctors = false;
+
+  @override
+  void initState() {
+    super.initState();
+    selectedHospitalId = initialPatientHospitalId();
+    loadDoctors();
+  }
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    healthNumberController.dispose();
+    ageController.dispose();
+    roomController.dispose();
+    heartRateController.dispose();
+    temperatureController.dispose();
+    oxygenController.dispose();
+    super.dispose();
+  }
+
+  Future<void> loadDoctors() async {
+    setState(() {
+      isLoadingDoctors = true;
+    });
+    try {
+      final doctors = await fetchActiveDoctorsFromSupabase(
+        hospitalId: selectedHospitalId,
+      );
+      if (!mounted) return;
+      setState(() {
+        doctorOptions = doctors;
+        if (!doctorOptions.any(
+          (doctor) => doctor.authUserId == selectedDoctorAuthUserId,
+        )) {
+          selectedDoctorAuthUserId = doctorOptions.isEmpty
+              ? null
+              : doctorOptions.first.authUserId;
+        }
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao carregar médicos: $error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isLoadingDoctors = false;
+        });
+      }
+    }
+  }
+
+  String? initialPatientHospitalId() {
+    final activeHospitals = hospitalService.activeUniqueHospitals;
+    final currentHospital = hospitalService.normalizeHospitalId(
+      currentAppUser?.hospitalId,
+    );
+    if (currentHospital != null &&
+        activeHospitals.any(
+          (hospital) => hospital.hospitalId == currentHospital,
+        )) {
+      return currentHospital;
+    }
+    return activeHospitals.isEmpty ? null : activeHospitals.first.hospitalId;
+  }
+
+  bool get canChoosePatientHospital {
+    final role = currentAppUser?.role;
+    return role == AppRole.superAdmin || role == AppRole.adminHospital;
+  }
+
+  void leaveAfterSave() {
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      navigator.pop(true);
+      return;
+    }
+
+    navigator.pushReplacement(
+      MaterialPageRoute(builder: (_) => const PatientsPage()),
+    );
+  }
 
   Future<void> addPatient() async {
     if (!hasPermission(AppPermission.createPatient)) {
@@ -3851,42 +4479,70 @@ class _AddPatientPageState extends State<AddPatientPage> {
     }
 
     final status = calculatePatientStatus(heartRate, temperature, oxygen);
+    final authUserId = supabase.auth.currentUser?.id;
+    final hospitalId = hospitalService.normalizeHospitalId(selectedHospitalId);
+    final medicoResponsavelAuthUserId = selectedDoctorAuthUserId?.trim();
+
+    if (authUserId == null || authUserId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Inicia sessão no Supabase antes de criar pacientes.'),
+        ),
+      );
+      return;
+    }
+
+    if (hospitalId == null || hospitalId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('A tua conta não tem hospital válido associado.'),
+        ),
+      );
+      return;
+    }
+
+    if (medicoResponsavelAuthUserId == null ||
+        medicoResponsavelAuthUserId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Seleciona o médico responsável.')),
+      );
+      return;
+    }
 
     try {
       final insertedPatient = await supabase
           .from('patients')
           .insert({
-            'name': nameController.text,
-            'age': age,
-            'room': roomController.text,
-            'status': status,
-            'heart_rate': heartRate,
-            'temperature': temperature,
-            'oxygen': oxygen,
+            'nome': nameController.text.trim(),
+            'idade': age,
+            'genero': 'Não indicado',
+            'numero_processo': healthNumberController.text.trim(),
+            'motivo_entrada': 'Avaliação clínica',
+            'estado_clinico': status,
+            'prioridade': selectedCareStatus,
+            'hospital': hospitalId,
+            'departamento': roomController.text.trim(),
+            'medico_responsavel_auth_user_id': medicoResponsavelAuthUserId,
+            'created_by_auth_user_id': authUserId,
+            'ativo': true,
           })
           .select()
           .single();
 
-      final newPatient = Patient(
-        id: insertedPatient['id'],
-        name: nameController.text,
-        age: age,
-        room: roomController.text,
-        hospitalId: defaultHospitalId(),
-        healthNumber: healthNumberController.text,
-        careStatus: selectedCareStatus,
-        status: status,
-        heartRate: heartRate,
-        temperature: temperature,
-        oxygen: oxygen,
-        medications: [],
-        history: [
-          ClinicalRecord(
-            description: 'Paciente adicionado manualmente.',
-            dateTime: getCurrentDateTime(),
-          ),
-        ],
-      );
+      final newPatient =
+          patientFromSupabaseMap(
+              insertedPatient,
+              history: [
+                ClinicalRecord(
+                  description: 'Paciente adicionado manualmente.',
+                  dateTime: getCurrentDateTime(),
+                ),
+              ],
+            )
+            ..heartRate = heartRate
+            ..temperature = temperature
+            ..oxygen = oxygen
+            ..careStatus = selectedCareStatus;
 
       patients.add(newPatient);
 
@@ -3899,10 +4555,10 @@ class _AddPatientPageState extends State<AddPatientPage> {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Paciente guardado na cloud.')),
+        const SnackBar(content: Text('Paciente guardado no Supabase.')),
       );
 
-      Navigator.pop(context);
+      leaveAfterSave();
     } catch (error) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Erro ao guardar paciente: $error')),
@@ -3960,10 +4616,82 @@ class _AddPatientPageState extends State<AddPatientPage> {
             TextField(
               controller: roomController,
               decoration: const InputDecoration(
-                labelText: 'Quarto',
+                labelText: 'Cama',
                 border: OutlineInputBorder(),
               ),
             ),
+
+            const SizedBox(height: 12),
+
+            if (canChoosePatientHospital)
+              DropdownButtonFormField<String>(
+                initialValue: selectedHospitalId,
+                decoration: const InputDecoration(
+                  labelText: 'Hospital',
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  for (final hospital in hospitalService.activeUniqueHospitals)
+                    DropdownMenuItem(
+                      value: hospital.hospitalId,
+                      child: Text(
+                        '${hospital.name} (${hospital.hospitalCode})',
+                      ),
+                    ),
+                ],
+                onChanged: (value) {
+                  setState(() {
+                    selectedHospitalId = value;
+                    selectedDoctorAuthUserId = null;
+                    doctorOptions = const [];
+                  });
+                  loadDoctors();
+                },
+              )
+            else
+              InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Hospital',
+                  border: OutlineInputBorder(),
+                ),
+                child: Text(
+                  hospitalService.byId(selectedHospitalId)?.name ??
+                      'Hospital por atribuir',
+                ),
+              ),
+
+            const SizedBox(height: 12),
+
+            if (isLoadingDoctors) const LinearProgressIndicator(),
+            DropdownButtonFormField<String>(
+              initialValue: selectedDoctorAuthUserId,
+              decoration: const InputDecoration(
+                labelText: 'Médico responsável',
+                border: OutlineInputBorder(),
+              ),
+              items: [
+                for (final doctor in doctorOptions)
+                  DropdownMenuItem(
+                    value: doctor.authUserId,
+                    child: Text(doctor.label),
+                  ),
+              ],
+              onChanged: doctorOptions.isEmpty
+                  ? null
+                  : (value) {
+                      setState(() {
+                        selectedDoctorAuthUserId = value;
+                      });
+                    },
+            ),
+            if (doctorOptions.isEmpty && !isLoadingDoctors)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text(
+                  'Não existem médicos ativos disponíveis para este hospital.',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
 
             const SizedBox(height: 12),
 
@@ -4087,6 +4815,127 @@ class _PatientDetailsPageState extends State<PatientDetailsPage> {
     super.dispose();
   }
 
+  Future<void> confirmDeletePatientFromDetails(Patient patient) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Apagar paciente'),
+        content: Text(
+          'Tens a certeza que queres apagar ${patient.name}? Esta ação remove também a medicação associada.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton.icon(
+            icon: const Icon(Icons.delete_outline),
+            label: const Text('Apagar'),
+            onPressed: () => Navigator.pop(context, true),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await deletePatientFromSupabase(patient);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${patient.name} apagado com sucesso.')),
+      );
+      Navigator.pop(context, true);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao apagar paciente: $error')),
+      );
+    }
+  }
+
+  Future<void> confirmMedicationAdministration(
+    Patient patient,
+    Medication medication,
+  ) async {
+    final professional = currentProfessionalName();
+    final previousResponsible = medication.responsibleProfessional;
+    final wasAdministered = medication.administered;
+
+    setState(() {
+      medication
+        ..administered = true
+        ..responsibleProfessional = professional;
+      patient.history.add(
+        ClinicalRecord(
+          description:
+              'Medicação administrada: ${medication.name}, dose ${medication.dose}, por $professional.',
+          dateTime: formatExactDateTime(DateTime.now()),
+        ),
+      );
+    });
+
+    try {
+      await updateMedicationInSupabase(patient, medication);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${medication.name} administrado com sucesso.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        medication
+          ..administered = wasAdministered
+          ..responsibleProfessional = previousResponsible;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao atualizar medicação: $error')),
+      );
+    }
+  }
+
+  Future<void> confirmDeleteMedication(
+    Patient patient,
+    Medication medication,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Apagar medicação'),
+        content: Text(
+          'Tens a certeza que queres apagar ${medication.name} da ficha de ${patient.name}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton.icon(
+            icon: const Icon(Icons.delete_outline),
+            label: const Text('Apagar'),
+            onPressed: () => Navigator.pop(context, true),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await deleteMedicationFromSupabase(patient, medication);
+      if (!mounted) return;
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${medication.name} apagado com sucesso.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao apagar medicação: $error')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final patient = widget.patient;
@@ -4102,7 +4951,17 @@ class _PatientDetailsPageState extends State<PatientDetailsPage> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: Text(patient.name)),
+      appBar: AppBar(
+        title: Text(patient.name),
+        actions: [
+          if (canDeletePatient(patient))
+            IconButton(
+              tooltip: 'Apagar paciente',
+              icon: const Icon(Icons.delete_outline),
+              onPressed: () => confirmDeletePatientFromDetails(patient),
+            ),
+        ],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: ListView(
@@ -4116,7 +4975,7 @@ class _PatientDetailsPageState extends State<PatientDetailsPage> {
                 InfoRow(label: 'Idade', value: '${patient.age} anos'),
                 InfoRow(label: 'Género', value: patient.gender),
                 InfoRow(label: 'Contacto', value: patient.contact),
-                InfoRow(label: 'Quarto', value: patient.room),
+                InfoRow(label: 'Cama', value: patient.room),
                 InfoRow(
                   label: 'Estado assistencial',
                   value: patient.careStatus,
@@ -4387,39 +5246,57 @@ class _PatientDetailsPageState extends State<PatientDetailsPage> {
                               ],
                             ),
                           ),
-                          if (!medication.administered &&
-                              canUsePatient(
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: [
+                              if (!medication.administered &&
+                                  canUsePatient(
+                                    patient,
+                                    AppPermission.manageMedication,
+                                  ))
+                                ElevatedButton(
+                                  onPressed: () =>
+                                      confirmMedicationAdministration(
+                                        patient,
+                                        medication,
+                                      ),
+                                  child: const Text('Confirmar'),
+                                ),
+                              if (canUsePatient(
                                 patient,
                                 AppPermission.manageMedication,
                               ))
-                            ElevatedButton(
-                              onPressed: () {
-                                final professional = currentProfessionalName();
-                                setState(() {
-                                  medication
-                                    ..administered = true
-                                    ..responsibleProfessional = professional;
-                                  patient.history.add(
-                                    ClinicalRecord(
-                                      description:
-                                          'Medicação administrada: ${medication.name}, dose ${medication.dose}, por $professional.',
-                                      dateTime: formatExactDateTime(
-                                        DateTime.now(),
+                                IconButton(
+                                  tooltip: 'Editar medicação',
+                                  icon: const Icon(Icons.edit),
+                                  onPressed: () async {
+                                    final saved = await Navigator.push<bool>(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => AddMedicationPage(
+                                          patient: patient,
+                                          medication: medication,
+                                        ),
                                       ),
-                                    ),
-                                  );
-                                });
-
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      '${medication.name} administrado com sucesso.',
-                                    ),
+                                    );
+                                    if (saved == true && mounted) {
+                                      setState(() {});
+                                    }
+                                  },
+                                ),
+                              if (canDeleteMedication(patient))
+                                IconButton(
+                                  tooltip: 'Apagar medicação',
+                                  color: Colors.red,
+                                  icon: const Icon(Icons.delete_outline),
+                                  onPressed: () => confirmDeleteMedication(
+                                    patient,
+                                    medication,
                                   ),
-                                );
-                              },
-                              child: const Text('Confirmar'),
-                            ),
+                                ),
+                            ],
+                          ),
                         ],
                       ),
                     ),
@@ -4541,7 +5418,7 @@ class _EditPatientRecordPageState extends State<EditPatientRecordPage> {
         .toList();
   }
 
-  void saveRecord() {
+  Future<void> saveRecord() async {
     if (admissionReasonController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Indica o motivo de entrada.')),
@@ -4574,6 +5451,17 @@ class _EditPatientRecordPageState extends State<EditPatientRecordPage> {
       ),
     );
 
+    try {
+      await updatePatientRecordInSupabase(patient);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao guardar ficha no Supabase: $error')),
+      );
+      return;
+    }
+
+    if (!mounted) return;
     Navigator.pop(context);
   }
 
@@ -4740,7 +5628,7 @@ class _UpdateVitalsPageState extends State<UpdateVitalsPage> {
     );
   }
 
-  void updateVitals() {
+  Future<void> updateVitals() async {
     if (heartRateController.text.isEmpty ||
         temperatureController.text.isEmpty ||
         oxygenController.text.isEmpty) {
@@ -4773,6 +5661,17 @@ class _UpdateVitalsPageState extends State<UpdateVitalsPage> {
       ),
     );
 
+    try {
+      await updatePatientRecordInSupabase(widget.patient);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao guardar sinais vitais: $error')),
+      );
+      return;
+    }
+
+    if (!mounted) return;
     Navigator.pop(context);
   }
 
@@ -4840,8 +5739,9 @@ class _UpdateVitalsPageState extends State<UpdateVitalsPage> {
 
 class AddMedicationPage extends StatefulWidget {
   final Patient patient;
+  final Medication? medication;
 
-  const AddMedicationPage({super.key, required this.patient});
+  const AddMedicationPage({super.key, required this.patient, this.medication});
 
   @override
   State<AddMedicationPage> createState() => _AddMedicationPageState();
@@ -4854,12 +5754,22 @@ class _AddMedicationPageState extends State<AddMedicationPage> {
   late final TextEditingController responsibleController;
 
   bool administered = false;
+  bool isSaving = false;
+
+  bool get isEditing => widget.medication != null;
 
   @override
   void initState() {
     super.initState();
+    final medication = widget.medication;
+    if (medication != null) {
+      nameController.text = medication.name;
+      doseController.text = medication.dose;
+      timeController.text = medication.time;
+      administered = medication.administered;
+    }
     responsibleController = TextEditingController(
-      text: currentProfessionalName(),
+      text: medication?.responsibleProfessional ?? currentProfessionalName(),
     );
   }
 
@@ -4881,7 +5791,7 @@ class _AddMedicationPageState extends State<AddMedicationPage> {
     }).toList();
   }
 
-  void addMedication() {
+  Future<void> saveMedication() async {
     if (nameController.text.isEmpty ||
         doseController.text.isEmpty ||
         timeController.text.isEmpty ||
@@ -4892,25 +5802,64 @@ class _AddMedicationPageState extends State<AddMedicationPage> {
       return;
     }
 
-    widget.patient.medications.add(
-      Medication(
-        name: nameController.text,
-        dose: doseController.text,
-        time: timeController.text,
-        responsibleProfessional: responsibleController.text,
-        administered: administered,
-      ),
-    );
+    setState(() {
+      isSaving = true;
+    });
 
-    widget.patient.history.add(
-      ClinicalRecord(
-        description:
-            'Nova medicação adicionada: ${nameController.text}, dose ${doseController.text}, às ${timeController.text}, responsável ${responsibleController.text}. Estado inicial: ${administered ? 'Administrado' : 'Pendente'}.',
-        dateTime: formatExactDateTime(DateTime.now()),
-      ),
-    );
+    try {
+      if (isEditing) {
+        final medication = widget.medication!;
+        medication
+          ..name = nameController.text.trim()
+          ..dose = doseController.text.trim()
+          ..time = timeController.text.trim()
+          ..responsibleProfessional = responsibleController.text.trim()
+          ..administered = administered;
 
-    Navigator.pop(context);
+        await updateMedicationInSupabase(widget.patient, medication);
+        widget.patient.history.add(
+          ClinicalRecord(
+            description:
+                'Medicação editada: ${medication.name}, dose ${medication.dose}, às ${medication.time}, responsável ${medication.responsibleProfessional}.',
+            dateTime: formatExactDateTime(DateTime.now()),
+          ),
+        );
+      } else {
+        final medication = Medication(
+          name: nameController.text.trim(),
+          dose: doseController.text.trim(),
+          time: timeController.text.trim(),
+          responsibleProfessional: responsibleController.text.trim(),
+          administered: administered,
+        );
+        final savedMedication = await insertMedicationInSupabase(
+          widget.patient,
+          medication,
+        );
+        widget.patient.medications.add(savedMedication);
+        widget.patient.history.add(
+          ClinicalRecord(
+            description:
+                'Nova medicação adicionada: ${savedMedication.name}, dose ${savedMedication.dose}, às ${savedMedication.time}, responsável ${savedMedication.responsibleProfessional}. Estado inicial: ${administered ? 'Administrado' : 'Pendente'}.',
+            dateTime: formatExactDateTime(DateTime.now()),
+          ),
+        );
+      }
+
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao guardar medicação: $error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isSaving = false;
+        });
+      }
+    }
   }
 
   @override
@@ -4922,7 +5871,9 @@ class _AddMedicationPageState extends State<AddMedicationPage> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Adicionar Medicação')),
+      appBar: AppBar(
+        title: Text(isEditing ? 'Editar Medicação' : 'Adicionar Medicação'),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: ListView(
@@ -5005,8 +5956,8 @@ class _AddMedicationPageState extends State<AddMedicationPage> {
               width: double.infinity,
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.save),
-                label: const Text('Guardar Medicação'),
-                onPressed: addMedication,
+                label: Text(isSaving ? 'A guardar...' : 'Guardar Medicação'),
+                onPressed: isSaving ? null : saveMedication,
               ),
             ),
           ],

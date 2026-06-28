@@ -24,10 +24,32 @@ class HospitalService {
 
   Hospital? byId(String? hospitalId) {
     if (hospitalId == null) return null;
+    final normalizedValue = hospitalId.trim().toLowerCase();
+    if (normalizedValue.isEmpty) return null;
+
     for (final hospital in _hospitals) {
-      if (hospital.hospitalId == hospitalId) return hospital;
+      if (hospital.hospitalId.toLowerCase() == normalizedValue ||
+          hospital.hospitalCode.toLowerCase() == normalizedValue ||
+          hospital.name.toLowerCase() == normalizedValue) {
+        return hospital;
+      }
     }
     return null;
+  }
+
+  String? normalizeHospitalId(String? value) {
+    return byId(value)?.hospitalId;
+  }
+
+  List<Hospital> get activeUniqueHospitals {
+    final seenIds = <String>{};
+    final result = <Hospital>[];
+    for (final hospital in _hospitals.where((hospital) => hospital.active)) {
+      if (seenIds.add(hospital.hospitalId)) {
+        result.add(hospital);
+      }
+    }
+    return List.unmodifiable(result);
   }
 
   Hospital registerHospital({

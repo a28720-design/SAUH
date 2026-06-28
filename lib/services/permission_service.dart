@@ -9,8 +9,10 @@ enum AppPermission {
   viewPatients,
   createPatient,
   editPatientRecord,
+  deletePatient,
   updateVitals,
   manageMedication,
+  deleteMedication,
   confirmAlerts,
   changePatientStatus,
   viewLimitedData,
@@ -25,6 +27,14 @@ class PermissionService {
       AppPermission.createUsers,
       AppPermission.manageUsers,
       AppPermission.viewPatients,
+      AppPermission.createPatient,
+      AppPermission.editPatientRecord,
+      AppPermission.deletePatient,
+      AppPermission.updateVitals,
+      AppPermission.manageMedication,
+      AppPermission.deleteMedication,
+      AppPermission.confirmAlerts,
+      AppPermission.changePatientStatus,
       AppPermission.viewSystemData,
       AppPermission.viewLimitedData,
     },
@@ -35,8 +45,10 @@ class PermissionService {
       AppPermission.viewPatients,
       AppPermission.createPatient,
       AppPermission.editPatientRecord,
+      AppPermission.deletePatient,
       AppPermission.updateVitals,
       AppPermission.manageMedication,
+      AppPermission.deleteMedication,
       AppPermission.confirmAlerts,
       AppPermission.changePatientStatus,
       AppPermission.viewSystemData,
@@ -112,7 +124,9 @@ class PermissionService {
 
   static bool canAccessHospital(AppUser? user, String? hospitalId) {
     if (user == null || !user.active) return false;
-    if (user.role == AppRole.superAdmin) return true;
+    if (user.role == AppRole.superAdmin || user.role == AppRole.adminHospital) {
+      return true;
+    }
     return user.hospitalId != null && user.hospitalId == hospitalId;
   }
 
