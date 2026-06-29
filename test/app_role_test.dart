@@ -27,7 +27,7 @@ void main() {
     expect(hospitalService.normalizeHospitalId('Hospital Principal'), isNull);
   });
 
-  test('admin e super admin podem apagar, medico nao', () {
+  test('admin e super admin podem apagar, médico não', () {
     final superAdmin = AppUser(
       userId: 'super',
       name: 'Super',
@@ -44,7 +44,7 @@ void main() {
     );
     final medico = AppUser(
       userId: 'medico',
-      name: 'Medico',
+      name: 'Médico',
       email: 'medico@sauh.pt',
       role: AppRole.medico,
       hospitalId: 'hospital-central',

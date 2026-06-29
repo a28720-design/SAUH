@@ -194,7 +194,7 @@ class VitalSignsSimulator extends ChangeNotifier {
 
   Timer? _timer;
   SimulationMode _mode = SimulationMode.stopped;
-  String _lastBotAction = 'Simulacao parada. Escreve ou escolhe um modo.';
+  String _lastBotAction = 'Simulação parada. Escreve ou escolhe um modo.';
   VitalSigns _vitals;
   SimulatorAlert? _latestAlert;
   String? _lastPersistenceError;
@@ -218,7 +218,7 @@ class VitalSignsSimulator extends ChangeNotifier {
     _timer?.cancel();
     _timer = null;
     _mode = SimulationMode.stopped;
-    _lastBotAction = 'Simulacao parada.';
+    _lastBotAction = 'Simulação parada.';
     notifyListeners();
   }
 
@@ -247,12 +247,12 @@ class VitalSignsSimulator extends ChangeNotifier {
       return;
     }
 
-    if (_containsAny(normalized, ['critico', 'em estado critico'])) {
+    if (_containsAny(normalized, ['crítico', 'em estado crítico'])) {
       setMode(SimulationMode.critical);
     } else if (_containsAny(normalized, [
-      'falta de oxigenio',
       'falta de oxigénio',
-      'baixo oxigenio',
+      'falta de oxigénio',
+      'baixo oxigénio',
       'baixo oxigénio',
       'hipoxia',
     ])) {
@@ -261,7 +261,7 @@ class VitalSignsSimulator extends ChangeNotifier {
       setMode(SimulationMode.fever);
     } else if (_containsAny(normalized, ['stress', 'estresse', 'ansiedade'])) {
       setMode(SimulationMode.stress);
-    } else if (_containsAny(normalized, ['recuperacao', 'recuperar'])) {
+    } else if (_containsAny(normalized, ['recuperação', 'recuperar'])) {
       setMode(SimulationMode.recovery);
     } else if (_containsAny(normalized, [
       'normaliza',
@@ -273,9 +273,9 @@ class VitalSignsSimulator extends ChangeNotifier {
       setMode(SimulationMode.stopped);
     } else if (_containsAny(normalized, [
       'inicia',
-      'comeca',
+      'começa',
       'arranca',
-      'simulacao',
+      'simulação',
     ])) {
       setMode(SimulationMode.normal);
     } else {
@@ -492,20 +492,20 @@ class VitalSignsSimulator extends ChangeNotifier {
         vitals.oxygen < 90 ||
         vitals.temperature > 38.5 ||
         vitals.systolicPressure < 90) {
-      return vitals.copyWith(patientStatus: 'Critico', alertLevel: 'Critico');
+      return vitals.copyWith(patientStatus: 'Crítico', alertLevel: 'Crítico');
     }
 
     if (vitals.heartRate > 110 ||
         vitals.oxygen < 95 ||
         vitals.temperature > 37.5 ||
         vitals.respiratoryRate > 24) {
-      return vitals.copyWith(patientStatus: 'Atencao', alertLevel: 'Atencao');
+      return vitals.copyWith(patientStatus: 'Atenção', alertLevel: 'Atenção');
     }
 
     if (_mode == SimulationMode.recovery) {
       return vitals.copyWith(
-        patientStatus: 'Em recuperacao',
-        alertLevel: 'Atencao',
+        patientStatus: 'Em recuperação',
+        alertLevel: 'Atenção',
       );
     }
 
@@ -519,30 +519,30 @@ class VitalSignsSimulator extends ChangeNotifier {
         SimulatorAlert(
           type: 'heart_rate',
           message: 'Batimentos acima de 130 bpm: ${_vitals.heartRate} bpm',
-          level: 'Critico',
+          level: 'Crítico',
           createdAt: DateTime.now(),
         ),
       if (_vitals.oxygen < 90)
         SimulatorAlert(
           type: 'oxygen',
-          message: 'Oxigenio abaixo de 90%: ${_vitals.oxygen}%',
-          level: 'Critico',
+          message: 'Oxigénio abaixo de 90%: ${_vitals.oxygen}%',
+          level: 'Crítico',
           createdAt: DateTime.now(),
         ),
       if (_vitals.temperature > 38.5)
         SimulatorAlert(
           type: 'temperature',
           message:
-              'Temperatura acima de 38.5 C: ${_vitals.temperature.toStringAsFixed(1)} C',
-          level: 'Critico',
+              'Temperatura acima de 38.5 ºC: ${_vitals.temperature.toStringAsFixed(1)} ºC',
+          level: 'Crítico',
           createdAt: DateTime.now(),
         ),
       if (_vitals.systolicPressure < 90)
         SimulatorAlert(
           type: 'systolic_pressure',
           message:
-              'Pressao sistolica abaixo de 90: ${_vitals.systolicPressure} mmHg',
-          level: 'Critico',
+              'Pressão sistólica abaixo de 90: ${_vitals.systolicPressure} mmHg',
+          level: 'Crítico',
           createdAt: DateTime.now(),
         ),
     ];

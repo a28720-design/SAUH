@@ -26,7 +26,8 @@ void main() async {
 }
 
 final supabase = Supabase.instance.client;
-const sauhLogoAsset = 'assets/images/sauh_logo.png';
+const sauhLogoAsset = 'assets/images/3.png';
+const sauhDrawerLogoAsset = 'assets/images/4.png';
 
 Future<void> clearExpiredSupabaseSession() async {
   final session = supabase.auth.currentSession;
@@ -980,19 +981,15 @@ String calculatePatientStatus(int heartRate, double temperature, int oxygen) {
 }
 
 Color patientStatusColor(String status) {
-  if (status == 'Crítico' || status == 'Critico') return Colors.red;
-  if (status == 'Atenção' ||
-      status == 'Atencao' ||
-      status == 'Em recuperacao') {
+  if (status == 'Crítico') return Colors.red;
+  if (status == 'Atenção' || status == 'Em recuperação') {
     return Colors.orange;
   }
   return Colors.green;
 }
 
 bool isCriticalPatient(Patient patient) {
-  return patient.status == 'Crítico' ||
-      patient.status == 'Critico' ||
-      patient.alertLevel == 'Critico';
+  return patient.status == 'Crítico' || patient.alertLevel == 'Crítico';
 }
 
 bool hasPendingMedication(Patient patient, DateTime now) {
@@ -1086,9 +1083,7 @@ List<EmergencyRoomData> buildEmergencyRooms(Iterable<Patient> source) {
   );
   final observation = takePatient(
     (patient) =>
-        patient.careStatus == 'Em observação' ||
-        patient.status == 'Atenção' ||
-        patient.status == 'Atencao',
+        patient.careStatus == 'Em observação' || patient.status == 'Atenção',
   );
   final critical = takePatient(isCriticalPatient);
   final waiting = takePatient(
@@ -1228,7 +1223,7 @@ class SAUHDrawer extends StatelessWidget {
               DrawerHeader(
                 child: Center(
                   child: Image.asset(
-                    sauhLogoAsset,
+                    sauhDrawerLogoAsset,
                     width: 220,
                     fit: BoxFit.contain,
                   ),
@@ -3208,8 +3203,8 @@ class _DashboardPageState extends State<DashboardPage> {
     patient.status = vitals.patientStatus;
     patient.alertLevel = vitals.alertLevel;
     patient.careStatus = switch (vitals.patientStatus) {
-      'Critico' || 'Crítico' => 'Crítico',
-      'Atencao' || 'Atenção' || 'Em recuperacao' => 'Em observação',
+      'Crítico' => 'Crítico',
+      'Atenção' || 'Em recuperação' => 'Em observação',
       _ => 'Estável',
     };
   }
@@ -3316,10 +3311,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
     final visiblePatients = visiblePatientsForCurrentUser();
     final criticalCount = visiblePatients
-        .where(
-          (patient) =>
-              patient.status == 'Crítico' || patient.status == 'Critico',
-        )
+        .where((patient) => patient.status == 'Crítico')
         .length;
 
     final alerts = generateAlerts();

@@ -175,7 +175,7 @@ class _VitalSignsSimulatorSectionState
                   onPressed: _setMode,
                 ),
                 _ModeButton(
-                  label: 'Critico',
+                  label: 'Crítico',
                   mode: SimulationMode.critical,
                   currentMode: _simulator.mode,
                   onPressed: _setMode,
@@ -187,13 +187,13 @@ class _VitalSignsSimulatorSectionState
                   onPressed: _setMode,
                 ),
                 _ModeButton(
-                  label: 'Falta de Oxigenio',
+                  label: 'Falta de Oxigénio',
                   mode: SimulationMode.lowOxygen,
                   currentMode: _simulator.mode,
                   onPressed: _setMode,
                 ),
                 _ModeButton(
-                  label: 'Recuperacao',
+                  label: 'Recuperação',
                   mode: SimulationMode.recovery,
                   currentMode: _simulator.mode,
                   onPressed: _setMode,
@@ -221,7 +221,7 @@ class _VitalSignsSimulatorSectionState
                 ),
                 Expanded(
                   child: _StatusLine(
-                    label: 'Ultima acao do bot',
+                    label: 'Última ação do bot',
                     value: _simulator.lastBotAction,
                   ),
                 ),
@@ -240,26 +240,26 @@ class _VitalSignsSimulatorSectionState
                 ),
                 _VitalChip(
                   icon: Icons.air,
-                  label: 'Oxigenio',
+                  label: 'Oxigénio',
                   value: '${vitals.oxygen}%',
                   danger: vitals.oxygen < 90,
                 ),
                 _VitalChip(
                   icon: Icons.thermostat,
                   label: 'Temperatura',
-                  value: '${vitals.temperature.toStringAsFixed(1)} C',
+                  value: '${vitals.temperature.toStringAsFixed(1)} ºC',
                   danger: vitals.temperature > 38.5,
                 ),
                 _VitalChip(
                   icon: Icons.bloodtype,
-                  label: 'Pressao',
+                  label: 'Pressão',
                   value:
                       '${vitals.systolicPressure}/${vitals.diastolicPressure}',
                   danger: vitals.systolicPressure < 90,
                 ),
                 _VitalChip(
                   icon: Icons.waves,
-                  label: 'Respiracao',
+                  label: 'Respiração',
                   value: '${vitals.respiratoryRate} rpm',
                   danger: vitals.respiratoryRate > 28,
                 ),
@@ -267,13 +267,13 @@ class _VitalSignsSimulatorSectionState
                   icon: Icons.health_and_safety,
                   label: 'Estado',
                   value: vitals.patientStatus,
-                  danger: vitals.alertLevel == 'Critico',
+                  danger: vitals.alertLevel == 'Crítico',
                 ),
                 _VitalChip(
                   icon: Icons.notification_important,
                   label: 'Nível de Alerta',
                   value: vitals.alertLevel,
-                  danger: vitals.alertLevel == 'Critico',
+                  danger: vitals.alertLevel == 'Crítico',
                 ),
               ],
             ),
@@ -375,7 +375,7 @@ class _VitalsTrendChart extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Evolucao em tempo real',
+              'Evolução em tempo real',
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 6),
@@ -391,9 +391,9 @@ class _VitalsTrendChart extends StatelessWidget {
               runSpacing: 6,
               children: [
                 _LegendDot(color: Colors.red, label: 'Batimentos'),
-                _LegendDot(color: Colors.blue, label: 'Oxigenio'),
+                _LegendDot(color: Colors.blue, label: 'Oxigénio'),
                 _LegendDot(color: Colors.deepOrange, label: 'Temperatura'),
-                _LegendDot(color: Colors.purple, label: 'Sistolica'),
+                _LegendDot(color: Colors.purple, label: 'Sistólica'),
               ],
             ),
           ],
